@@ -9,7 +9,7 @@
 [![Rust](https://img.shields.io/badge/Rust-1.80+-orange.svg)](https://www.rust-lang.org/)
 [![React](https://img.shields.io/badge/React-19-61dafb.svg)](https://react.dev/)
 [![Univer](https://img.shields.io/badge/Engine-Univer-10b981.svg)](https://univer.ai/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-purple.svg)](LICENSE)
+[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-purple.svg)](LICENSE)
 
 </div>
 
@@ -218,4 +218,4 @@ npm run tauri build
 
 ## 📄 开源许可 (License)
 
-本项目采用 [MIT License](LICENSE) 开源协议。
+本项目采用 [GNU Affero General Public License v3.0 (AGPL-3.0)](LICENSE) 开源协议。
