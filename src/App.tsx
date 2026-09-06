@@ -60,7 +60,23 @@ import { SymbolDialog } from "./SymbolDialog";
 import { HeaderFooterDialog, type HeaderFooterData } from "./HeaderFooterDialog";
 import { AllowEditRangesDialog, type AllowEditRangeItem } from "./AllowEditRangesDialog";
 import { WorkbookStatsModal } from "./WorkbookStatsModal";
-import { RecommendedChartsDialog } from "./RecommendedChartsDialog";
+import {
+  RecommendedChartsDialog,
+  ChartSelectDataDialog,
+  ChartFormatDialog,
+  ChartOverlay,
+  recommendCharts,
+  buildChartVisual,
+  applyChartStateEdit,
+  transposeChartSeries,
+  KIND_NAMES,
+  COLOR_PALETTES,
+  type SheetVisual,
+  type RecommendedKind,
+  type ChartRecommendations,
+  type ChartStateEdit,
+  type ChartVisualState,
+} from "./charts";
 import { type SelectionFormat, toSelectionFormat } from "./selection-format";
 import "./App.css";
 
@@ -165,6 +181,11 @@ export default function App() {
   const [workbookProtected, setWorkbookProtected] = useState(false);
   const [calcManual, setCalcManual] = useState(false);
   const [selectedChart, setSelectedChart] = useState(false);
+  const [charts, setCharts] = useState<SheetVisual[]>([]);
+  const [activeChartId, setActiveChartId] = useState<string | null>(null);
+  const [recommendedData, setRecommendedData] = useState<ChartRecommendations | null>(null);
+  const [isChartSelectDataOpen, setIsChartSelectDataOpen] = useState(false);
+  const [isChartFormatOpen, setIsChartFormatOpen] = useState(false);
 
   // Safe range resolver (ensures non-null even if canvas focus was momentarily lost)
   function getTargetRange() {
@@ -198,6 +219,129 @@ export default function App() {
       fields.push({ label, colIndex: colIdx });
     }
     return fields;
+  }
+
+  function extractActiveChartValues(): {
+    values: (string | number | boolean | null)[][];
+    rangeA1: string;
+    sheetName: string;
+    sheetId: string;
+  } {
+    const ctx = getTargetRange();
+    if (!ctx) {
+      return {
+        values: [
+          ['分类', '系列 1', '系列 2'],
+          ['Q1', 120, 95],
+          ['Q2', 150, 130],
+          ['Q3', 180, 160],
+          ['Q4', 210, 190],
+        ],
+        rangeA1: 'A1:C5',
+        sheetName: 'Sheet1',
+        sheetId: 'sheet-01',
+      };
+    }
+    const worksheet = ctx.worksheet;
+    const range = ctx.range;
+    const sheetName = worksheet.getSheetName ? worksheet.getSheetName() : 'Sheet1';
+    const sheetId = worksheet.getSheetId ? worksheet.getSheetId() : 'sheet-01';
+
+    let startRow = range.getRow();
+    let startCol = range.getColumn();
+    let numRows = range.getHeight();
+    let numCols = range.getWidth();
+
+    if (numRows === 1 && numCols === 1) {
+      const maxR = Math.min(worksheet.getMaxRows(), 30);
+      const maxC = Math.min(worksheet.getMaxColumns(), 15);
+      let hasData = false;
+      for (let r = 0; r < maxR; r++) {
+        for (let c = 0; c < maxC; c++) {
+          const v = worksheet.getRange(r, c, 1, 1).getValue();
+          if (v != null && String(v).trim() !== '') {
+            hasData = true;
+            break;
+          }
+        }
+        if (hasData) break;
+      }
+      if (hasData) {
+        startRow = 0;
+        startCol = 0;
+        numRows = Math.min(10, maxR);
+        numCols = Math.min(5, maxC);
+      }
+    }
+
+    const vals: (string | number | boolean | null)[][] = [];
+    for (let r = 0; r < numRows; r++) {
+      const rowArr: (string | number | boolean | null)[] = [];
+      for (let c = 0; c < numCols; c++) {
+        const cellVal = worksheet.getRange(startRow + r, startCol + c, 1, 1).getValue();
+        rowArr.push(cellVal != null ? cellVal : null);
+      }
+      vals.push(rowArr);
+    }
+
+    const fromA1 = `${getColumnName(startCol)}${startRow + 1}`;
+    const toA1 = `${getColumnName(startCol + numCols - 1)}${startRow + numRows}`;
+    const rangeA1 = numRows === 1 && numCols === 1 ? fromA1 : `${fromA1}:${toA1}`;
+
+    return { values: vals, rangeA1, sheetName, sheetId };
+  }
+
+  function insertChartObject(chartKind: RecommendedKind, customTitle?: string) {
+    const data = extractActiveChartValues();
+    try {
+      const newChart = buildChartVisual({
+        id: `chart-${Date.now()}`,
+        sheetId: data.sheetId,
+        sheetName: data.sheetName,
+        chartType: chartKind,
+        dataRange: data.rangeA1,
+        title: customTitle,
+        values: data.values,
+        initialPos: {
+          x: 100 + (charts.length % 5) * 25,
+          y: 60 + (charts.length % 5) * 25,
+          width: 520,
+          height: 340,
+        },
+      });
+      setCharts((prev) => [...prev, newChart]);
+      setActiveChartId(newChart.id);
+      setSelectedChart(true);
+      setStatus(`已在当前工作表插入 ${KIND_NAMES[chartKind]?.zh || chartKind} (${data.rangeA1})`);
+    } catch (e: any) {
+      console.warn("Insert chart fallback:", e);
+      const fallbackData = [
+        ['季度', '销售额', '毛利润'],
+        ['第一季度', 450, 180],
+        ['第二季度', 620, 260],
+        ['第三季度', 510, 210],
+        ['第四季度', 730, 310],
+      ];
+      const newChart = buildChartVisual({
+        id: `chart-${Date.now()}`,
+        sheetId: data.sheetId,
+        sheetName: data.sheetName,
+        chartType: chartKind,
+        dataRange: 'A1:C5',
+        title: customTitle || '季度销售业绩与利润',
+        values: fallbackData,
+        initialPos: {
+          x: 100 + (charts.length % 5) * 25,
+          y: 60 + (charts.length % 5) * 25,
+          width: 520,
+          height: 340,
+        },
+      });
+      setCharts((prev) => [...prev, newChart]);
+      setActiveChartId(newChart.id);
+      setSelectedChart(true);
+      setStatus(`已插入 ${KIND_NAMES[chartKind]?.zh || chartKind}`);
+    }
   }
 
   function syncSelectionState() {
@@ -1392,6 +1536,9 @@ export default function App() {
           break;
         }
         case "recommended-charts-open": {
+          const data = extractActiveChartValues();
+          const reco = recommendCharts(data.values);
+          setRecommendedData(reco);
           setIsRecommendedChartsOpen(true);
           break;
         }
@@ -2166,20 +2313,127 @@ export default function App() {
 
         // ── 图表设计 (Chart Design) ──
         case "chart-switch-row-col": {
-          setStatus("图表数据源：已完成行/列互换 (Switch Row/Column)");
+          if (activeChartId) {
+            const activeChart = charts.find((c) => c.id === activeChartId);
+            if (activeChart) {
+              const seriesSet = transposeChartSeries(activeChart.chart.series, (n) => `系列 ${n}`);
+              if (seriesSet) {
+                setCharts((prev) =>
+                  prev.map((c) =>
+                    c.id === activeChartId ? { ...c, chart: applyChartStateEdit(c.chart, { seriesSet }) } : c
+                  )
+                );
+                setStatus("图表数据源：已完成行/列互换 (Switch Row/Column)");
+              } else {
+                setStatus("当前图表暂无有效类别，无法互换行/列");
+              }
+            }
+          } else {
+            setStatus("请先选中一个图表对象");
+          }
           break;
         }
         case "chart-select-data": {
-          setStatus(`图表数据源选择：当前数据引用范围为 ${range.getA1Notation()}`);
+          if (activeChartId) {
+            setIsChartSelectDataOpen(true);
+          } else {
+            setStatus("请先选中一个图表对象以调整数据源");
+          }
           break;
         }
         case "chart-format-pane": {
-          setStatus("图表格式设计窗格已激活");
+          if (activeChartId) {
+            setIsChartFormatOpen(true);
+          } else {
+            setStatus("请先选中一个图表对象以设置格式");
+          }
           break;
         }
         case "chart-delete": {
-          setSelectedChart(false);
-          setStatus("选中的图表对象已成功删除");
+          if (activeChartId) {
+            setCharts((prev) => prev.filter((c) => c.id !== activeChartId));
+            setActiveChartId(null);
+            setSelectedChart(false);
+            setStatus("选中的图表对象已成功删除");
+          } else {
+            setStatus("请先选中要删除的图表对象");
+          }
+          break;
+        }
+        case "chart-type-column":
+        case "chart-type-bar":
+        case "chart-type-line":
+        case "chart-type-area":
+        case "chart-type-pie":
+        case "chart-type-doughnut": {
+          const kind = cmd.slice("chart-type-".length) as RecommendedKind;
+          if (activeChartId) {
+            setCharts((prev) =>
+              prev.map((c) =>
+                c.id === activeChartId ? { ...c, chart: applyChartStateEdit(c.chart, { chartType: kind }) } : c
+              )
+            );
+            setStatus(`图表类型已转换为: ${KIND_NAMES[kind]?.zh || kind}`);
+          } else {
+            insertChartObject(kind);
+          }
+          break;
+        }
+        case "chart-element-title": {
+          if (activeChartId) {
+            setCharts((prev) =>
+              prev.map((c) =>
+                c.id === activeChartId
+                  ? { ...c, chart: { ...c.chart, title: c.chart.title ? '' : '图表标题' } }
+                  : c
+              )
+            );
+            setStatus("已切换图表标题");
+          }
+          break;
+        }
+        case "chart-element-axis-cat": {
+          if (activeChartId) {
+            setCharts((prev) =>
+              prev.map((c) =>
+                c.id === activeChartId
+                  ? {
+                      ...c,
+                      chart: {
+                        ...c.chart,
+                        axisTitles: {
+                          ...c.chart.axisTitles,
+                          category: c.chart.axisTitles?.category ? undefined : '类别轴标题',
+                        },
+                      },
+                    }
+                  : c
+              )
+            );
+            setStatus("已切换横坐标轴标题");
+          }
+          break;
+        }
+        case "chart-element-axis-val": {
+          if (activeChartId) {
+            setCharts((prev) =>
+              prev.map((c) =>
+                c.id === activeChartId
+                  ? {
+                      ...c,
+                      chart: {
+                        ...c.chart,
+                        axisTitles: {
+                          ...c.chart.axisTitles,
+                          value: c.chart.axisTitles?.value ? undefined : '数值轴标题',
+                        },
+                      },
+                    }
+                  : c
+              )
+            );
+            setStatus("已切换纵坐标轴标题");
+          }
           break;
         }
 
@@ -2216,22 +2470,85 @@ export default function App() {
 
         default: {
           // Dynamic prefix matching
-          if (cmd.startsWith("chart-type:")) {
-            const chartType = cmd.slice("chart-type:".length);
-            setSelectedChart(true);
-            setStatus(`图表类型已切换为: ${chartType}`);
-          } else if (cmd.startsWith("chart-layout:")) {
-            setStatus(`已应用快速图表布局: 样式 ${cmd.slice("chart-layout:".length)}`);
-          } else if (cmd.startsWith("chart-colors:")) {
-            setStatus(`已应用图表调色板: ${cmd.slice("chart-colors:".length)}`);
-          } else if (cmd.startsWith("chart-add-element:")) {
-            setStatus(`已添加图表元素: ${cmd.slice("chart-add-element:".length)}`);
-          } else if (cmd.startsWith("insert-chart:")) {
-            setSelectedChart(true);
-            setStatus(`已在当前工作表插入 ${cmd.slice("insert-chart:".length)} 图表`);
+          if (cmd.startsWith("insert-chart:")) {
+            const chartKind = cmd.slice("insert-chart:".length) as RecommendedKind;
+            insertChartObject(chartKind);
           } else if (cmd.startsWith("insert-pivot-chart:")) {
-            setSelectedChart(true);
-            setStatus(`已在当前工作表插入数据透视图 (${cmd.slice("insert-pivot-chart:".length)})`);
+            const chartKind = cmd.slice("insert-pivot-chart:".length) as RecommendedKind;
+            insertChartObject(chartKind, "数据透视图");
+          } else if (cmd.startsWith("chart-type:")) {
+            const chartType = cmd.slice("chart-type:".length) as RecommendedKind;
+            if (activeChartId) {
+              setCharts((prev) =>
+                prev.map((c) =>
+                  c.id === activeChartId ? { ...c, chart: applyChartStateEdit(c.chart, { chartType }) } : c
+                )
+              );
+              setStatus(`图表类型已切换为: ${KIND_NAMES[chartType]?.zh || chartType}`);
+            } else {
+              insertChartObject(chartType);
+            }
+          } else if (cmd.startsWith("chart-labels:")) {
+            const dataLabels = cmd.slice("chart-labels:".length) as ChartVisualState['dataLabels'];
+            if (activeChartId) {
+              setCharts((prev) =>
+                prev.map((c) =>
+                  c.id === activeChartId ? { ...c, chart: applyChartStateEdit(c.chart, { dataLabels }) } : c
+                )
+              );
+              setStatus(`已设置数据标签为: ${dataLabels === 'none' ? '无' : '数值'}`);
+            }
+          } else if (cmd.startsWith("chart-legend:")) {
+            const legend = cmd.slice("chart-legend:".length) as ChartVisualState['legend'];
+            if (activeChartId) {
+              setCharts((prev) =>
+                prev.map((c) =>
+                  c.id === activeChartId ? { ...c, chart: applyChartStateEdit(c.chart, { legend }) } : c
+                )
+              );
+              setStatus(`已调整图例位置: ${legend}`);
+            }
+          } else if (cmd.startsWith("chart-layout:")) {
+            const layoutIdx = cmd.slice("chart-layout:".length);
+            if (activeChartId) {
+              let patch: ChartStateEdit = {};
+              if (layoutIdx === "1") patch = { legend: "right", dataLabels: "value", gridlines: true };
+              else if (layoutIdx === "2") patch = { legend: "top", dataLabels: "value", gridlines: true };
+              else if (layoutIdx === "3") patch = { legend: "bottom", dataLabels: "none", gridlines: true };
+              else if (layoutIdx === "4") patch = { legend: "none", dataLabels: "none", gridlines: false };
+              setCharts((prev) =>
+                prev.map((c) => (c.id === activeChartId ? { ...c, chart: applyChartStateEdit(c.chart, patch) } : c))
+              );
+              setStatus(`已应用快速图表布局: 样式 ${layoutIdx}`);
+            }
+          } else if (cmd.startsWith("chart-colors:")) {
+            const pal = cmd.slice("chart-colors:".length);
+            const colors = COLOR_PALETTES[pal] ?? COLOR_PALETTES.office;
+            if (activeChartId) {
+              const activeChart = charts.find((c) => c.id === activeChartId);
+              if (activeChart) {
+                const seriesColors: Record<string, string> = {};
+                activeChart.chart.series.forEach((_, idx) => {
+                  seriesColors[String(idx)] = colors[idx % colors.length];
+                });
+                setCharts((prev) =>
+                  prev.map((c) =>
+                    c.id === activeChartId ? { ...c, chart: applyChartStateEdit(c.chart, { seriesColors }) } : c
+                  )
+                );
+                setStatus(`已应用图表配色: ${pal}`);
+              }
+            }
+          } else if (cmd.startsWith("chart-grouping:")) {
+            const grouping = cmd.slice("chart-grouping:".length) as ChartStateEdit['grouping'];
+            if (activeChartId) {
+              setCharts((prev) =>
+                prev.map((c) =>
+                  c.id === activeChartId ? { ...c, chart: applyChartStateEdit(c.chart, { grouping }) } : c
+                )
+              );
+              setStatus(`已设置图表堆叠方式: ${grouping}`);
+            }
           } else if (cmd.startsWith("sparkline:")) {
             setStatus(`已为选区 ${range.getA1Notation()} 创建迷你图 (${cmd.slice("sparkline:".length)})`);
           } else if (cmd.startsWith("cell-style:")) {
@@ -2439,8 +2756,48 @@ export default function App() {
         definedNames={definedNames.map((n) => n.name)}
       />
 
-      <main className="univer-grid-wrapper">
+      <main className="univer-grid-wrapper" style={{ position: "relative" }}>
         <div id="univer-container" />
+        <ChartOverlay
+          charts={charts}
+          activeChartId={activeChartId}
+          onSelectChart={(id) => {
+            setActiveChartId(id);
+            setSelectedChart(Boolean(id));
+          }}
+          onUpdateChartPos={(id, pos) => {
+            setCharts((prev) => prev.map((c) => (c.id === id ? { ...c, pos } : c)));
+          }}
+          onOpenSelectData={(chart) => {
+            setActiveChartId(chart.id);
+            setSelectedChart(true);
+            setIsChartSelectDataOpen(true);
+          }}
+          onOpenFormatPane={(chart) => {
+            setActiveChartId(chart.id);
+            setSelectedChart(true);
+            setIsChartFormatOpen(true);
+          }}
+          onSwitchRowCol={(chart) => {
+            const seriesSet = transposeChartSeries(chart.chart.series, (n) => `系列 ${n}`);
+            if (seriesSet) {
+              setCharts((prev) =>
+                prev.map((c) =>
+                  c.id === chart.id ? { ...c, chart: applyChartStateEdit(c.chart, { seriesSet }) } : c
+                )
+              );
+              setStatus("图表数据源：已完成行/列互换 (Switch Row/Column)");
+            }
+          }}
+          onDeleteChart={(id) => {
+            setCharts((prev) => prev.filter((c) => c.id !== id));
+            if (activeChartId === id) {
+              setActiveChartId(null);
+              setSelectedChart(false);
+            }
+            setStatus("选中的图表对象已成功删除");
+          }}
+        />
       </main>
 
       {/* Format Cells Dialog (Ctrl+1) */}
@@ -2555,9 +2912,43 @@ export default function App() {
       <RecommendedChartsDialog
         isOpen={isRecommendedChartsOpen}
         onClose={() => setIsRecommendedChartsOpen(false)}
-        onSelectChart={(type) => {
-          setStatus(`已基于当前选区插入推荐的 ${type} 图表`);
-          setSelectedChart(true);
+        recommendations={recommendedData}
+        onSelectChart={(kind) => {
+          insertChartObject(kind);
+        }}
+      />
+
+      {/* Select Data Dialog */}
+      <ChartSelectDataDialog
+        isOpen={isChartSelectDataOpen}
+        onClose={() => setIsChartSelectDataOpen(false)}
+        chart={charts.find((c) => c.id === activeChartId)?.chart ?? null}
+        onApply={(edit) => {
+          if (activeChartId) {
+            setCharts((prev) =>
+              prev.map((c) =>
+                c.id === activeChartId ? { ...c, chart: applyChartStateEdit(c.chart, edit) } : c
+              )
+            );
+            setStatus("图表数据源已成功更新");
+          }
+        }}
+      />
+
+      {/* Format Chart Dialog */}
+      <ChartFormatDialog
+        isOpen={isChartFormatOpen}
+        onClose={() => setIsChartFormatOpen(false)}
+        chart={charts.find((c) => c.id === activeChartId)?.chart ?? null}
+        onApply={(edit) => {
+          if (activeChartId) {
+            setCharts((prev) =>
+              prev.map((c) =>
+                c.id === activeChartId ? { ...c, chart: applyChartStateEdit(c.chart, edit) } : c
+              )
+            );
+            setStatus("图表格式样式已成功更新");
+          }
         }}
       />
 
