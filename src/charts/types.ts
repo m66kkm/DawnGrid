@@ -90,6 +90,7 @@ export interface ChartVisualState {
   lineMarkers?: boolean | undefined;
   dispBlanksAs?: 'gap' | 'zero' | 'span' | undefined;
   titleStyle?: { size?: number | undefined; bold?: boolean | undefined; color?: string | undefined } | undefined;
+  palette?: string | undefined;
 }
 
 export interface SheetVisual {
@@ -164,6 +165,7 @@ export interface ChartStateEdit {
     categoriesRef?: string | undefined;
     color?: string | undefined;
   }[] | undefined;
+  palette?: string | undefined;
 }
 
 export const COLOR_PALETTES: Record<string, string[]> = {

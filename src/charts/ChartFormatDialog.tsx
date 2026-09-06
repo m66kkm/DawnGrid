@@ -49,7 +49,16 @@ export function ChartFormatDialog({
     chart.series.forEach((_, idx) => {
       seriesColors[String(idx)] = colors[idx % colors.length];
     });
-    onApply({ seriesColors });
+    const pointColors: Record<string, Record<string, string>> = {};
+    if (isPie || chart.series.length === 1) {
+      const ptMap: Record<string, string> = {};
+      const catCount = chart.series[0]?.categories?.length || chart.series[0]?.values?.length || 0;
+      for (let i = 0; i < catCount; i++) {
+        ptMap[String(i)] = colors[i % colors.length];
+      }
+      pointColors['0'] = ptMap;
+    }
+    onApply({ seriesColors, pointColors, palette: pal });
   };
 
   const handleSave = () => {
@@ -69,6 +78,7 @@ export function ChartFormatDialog({
       gapWidthPct: gapWidth,
       explosionPct: explosion,
       holeSizePct: holeSize,
+      palette: paletteName,
     };
 
     onApply(edit);

@@ -13,16 +13,35 @@ interface ChartRendererProps {
 }
 
 export function ChartRenderer({ chart, width, height }: ChartRendererProps): React.JSX.Element {
-  const defaultColors = COLOR_PALETTES.office;
+  const paletteColors = (chart.palette && COLOR_PALETTES[chart.palette]) || COLOR_PALETTES.office;
+  const defaultColors = paletteColors;
   const seriesCount = chart.series.length;
   const primarySeries = chart.series[0];
   const categories = primarySeries?.categories ?? [];
   const numCategories = Math.max(categories.length, 1);
 
+  // Grouping modes
+  const isStacked = chart.grouping === 'stacked';
+  const isPercentStacked = chart.grouping === 'percentStacked';
+
+  const types = chart.chartTypes;
+  const isBarHorizontal = chart.barDirection === 'bar';
+  const isPie = types.includes('pieChart') || types.includes('doughnutChart');
+  const isDoughnut = types.includes('doughnutChart');
+  const isScatter = types.includes('scatterChart');
+  const isRadar = types.includes('radarChart');
+  const isLine = types.includes('lineChart') && !types.includes('barChart');
+  const isArea = types.includes('areaChart') && !types.includes('barChart');
+  const isCombo = types.includes('barChart') && types.includes('lineChart');
+
+  // Axis title checks
+  const hasCatAxisTitle = Boolean(chart.axisTitles?.category && !isPie && !isRadar);
+  const hasValAxisTitle = Boolean(chart.axisTitles?.value && !isPie && !isRadar);
+
   // Layout metrics
   const titleHeight = chart.title ? 32 : 10;
-  const legendPos = chart.legend ?? (seriesCount > 1 ? 'right' : 'none');
-  const showLegend = legendPos !== 'none' && seriesCount > 0;
+  const legendPos = chart.legend ?? (seriesCount > 1 || isPie ? 'right' : 'none');
+  const showLegend = legendPos !== 'none' && (seriesCount > 0 || (isPie && categories.length > 0));
 
   let legendWidth = 0;
   let legendHeight = 0;
@@ -34,32 +53,36 @@ export function ChartRenderer({ chart, width, height }: ChartRendererProps): Rea
     }
   }
 
-  const isBarHorizontal = chart.barDirection === 'bar';
-  const types = chart.chartTypes;
-  const isPie = types.includes('pieChart') || types.includes('doughnutChart');
-  const isDoughnut = types.includes('doughnutChart');
-  const isScatter = types.includes('scatterChart');
-  const isRadar = types.includes('radarChart');
-  const isLine = types.includes('lineChart') && !types.includes('barChart');
-  const isArea = types.includes('areaChart') && !types.includes('barChart');
-  const isCombo = types.includes('barChart') && types.includes('lineChart');
-
-  const paddingLeft = isPie || isRadar ? 20 : (legendPos === 'left' ? legendWidth + 45 : 55);
+  const paddingLeft = isPie || isRadar ? 20 : (legendPos === 'left' ? legendWidth + 45 : 55) + (hasValAxisTitle ? 20 : 0);
   const paddingRight = isPie || isRadar ? 20 : (legendPos === 'right' ? legendWidth + 20 : 25);
   const paddingTop = titleHeight + (legendPos === 'top' ? legendHeight + 8 : 8);
-  const paddingBottom = isPie || isRadar ? 20 : (legendPos === 'bottom' ? legendHeight + 35 : 35);
+  const paddingBottom = isPie || isRadar ? 20 : (legendPos === 'bottom' ? legendHeight + 35 : 35) + (hasCatAxisTitle ? 20 : 0);
 
   const plotWidth = Math.max(10, width - paddingLeft - paddingRight);
   const plotHeight = Math.max(10, height - paddingTop - paddingBottom);
 
   // Value axis calculations
   const allValues = chart.series.flatMap((s) => s.values);
-  const maxVal = allValues.length > 0 ? Math.max(...allValues, 0) : 10;
-  const minVal = allValues.length > 0 ? Math.min(...allValues, 0) : 0;
-  const scale = valueAxisScale(maxVal, {
-    min: chart.valueAxis?.min ?? (minVal < 0 ? minVal : 0),
-    max: chart.valueAxis?.max,
-  });
+  const catPositiveTotals = Array.from({ length: numCategories }, (_, i) =>
+    chart.series.reduce((sum, s) => sum + Math.max(0, s.values[i] ?? 0), 0)
+  );
+  const stackMaxVal = Math.max(...catPositiveTotals, 10);
+
+  const maxVal = isPercentStacked
+    ? 100
+    : isStacked
+      ? stackMaxVal
+      : (allValues.length > 0 ? Math.max(...allValues, 0) : 10);
+  const minVal = isPercentStacked || isStacked
+    ? 0
+    : (allValues.length > 0 ? Math.min(...allValues, 0) : 0);
+
+  const scale = isPercentStacked
+    ? { min: 0, max: 100, ticks: [0, 20, 40, 60, 80, 100] }
+    : valueAxisScale(maxVal, {
+        min: chart.valueAxis?.min ?? (minVal < 0 ? minVal : 0),
+        max: chart.valueAxis?.max,
+      });
 
   const valSpan = Math.max(scale.max - scale.min, 1e-6);
   const getY = (val: number): number =>
@@ -69,6 +92,19 @@ export function ChartRenderer({ chart, width, height }: ChartRendererProps): Rea
 
   const showGrid = chart.gridlines !== false && !isPie && !isRadar;
   const showDataLabels = chart.dataLabels && chart.dataLabels !== 'none';
+
+  // Build legend items (Pie shows categories, other charts show series)
+  const legendItems = isPie
+    ? categories.map((cat, i) => {
+        const sliceColor =
+          primarySeries?.pointColors?.find((p) => p.index === i)?.color ??
+          defaultColors[i % defaultColors.length];
+        return { name: cat || `类别 ${i + 1}`, color: sliceColor };
+      })
+    : chart.series.map((series, sIndex) => ({
+        name: series.name || `系列 ${sIndex + 1}`,
+        color: series.color ?? defaultColors[sIndex % defaultColors.length],
+      }));
 
   return (
     <div
@@ -129,7 +165,7 @@ export function ChartRenderer({ chart, width, height }: ChartRendererProps): Rea
                     fontSize="10"
                     fill="#5f6368"
                   >
-                    {tick}
+                    {isPercentStacked ? `${tick}%` : tick}
                   </text>
                 </g>
               );
@@ -239,87 +275,205 @@ export function ChartRenderer({ chart, width, height }: ChartRendererProps): Rea
         {/* COLUMN CHART */}
         {!isPie && !isBarHorizontal && !isRadar && !isLine && !isArea && (
           <g className="chart-bars-group">
-            {chart.series.map((series, sIndex) => {
-              const color = series.color ?? defaultColors[sIndex % defaultColors.length];
-              const band = plotWidth / numCategories;
-              const barWidth = Math.max(
-                4,
-                Math.min(28, (band * (1 - (chart.gapWidthPct ?? 150) / 400)) / seriesCount),
-              );
-
-              return series.values.map((v, i) => {
-                const x = paddingLeft + i * band + sIndex * barWidth + (band - seriesCount * barWidth) / 2;
-                const y = getY(v);
-                const barH = Math.max(0, paddingTop + plotHeight - y);
+            {isStacked || isPercentStacked ? (
+              // Stacked / PercentStacked Column
+              categories.map((_, i) => {
+                const band = plotWidth / numCategories;
+                const barWidth = Math.max(6, Math.min(36, band * 0.65));
+                const x = paddingLeft + i * band + (band - barWidth) / 2;
+                const total = isPercentStacked ? (catPositiveTotals[i] || 1) : 1;
+                let cumVal = 0;
 
                 return (
-                  <g key={`${sIndex}-${i}`}>
-                    <rect
-                      x={x}
-                      y={y}
-                      width={barWidth}
-                      height={barH}
-                      fill={color}
-                      rx={1.5}
-                    />
-                    {showDataLabels && (
-                      <text
-                        x={x + barWidth / 2}
-                        y={Math.max(paddingTop + 10, y - 4)}
-                        textAnchor="middle"
-                        fontSize="9.5"
-                        fill="#333"
-                        fontWeight="500"
-                      >
-                        {v}
-                      </text>
-                    )}
+                  <g key={i}>
+                    {chart.series.map((series, sIndex) => {
+                      const v = Math.max(0, series.values[i] ?? 0);
+                      const color = series.color ?? defaultColors[sIndex % defaultColors.length];
+                      const startVal = cumVal;
+                      cumVal += v;
+                      const endVal = cumVal;
+
+                      const y1 = isPercentStacked
+                        ? paddingTop + plotHeight - (startVal / total) * plotHeight
+                        : getY(startVal);
+                      const y2 = isPercentStacked
+                        ? paddingTop + plotHeight - (endVal / total) * plotHeight
+                        : getY(endVal);
+                      const barY = Math.min(y1, y2);
+                      const barH = Math.max(0, Math.abs(y1 - y2));
+
+                      return (
+                        <g key={`${sIndex}-${i}`}>
+                          <rect
+                            x={x}
+                            y={barY}
+                            width={barWidth}
+                            height={barH}
+                            fill={color}
+                            stroke="#ffffff"
+                            strokeWidth={0.5}
+                          />
+                          {showDataLabels && barH > 14 && (
+                            <text
+                              x={x + barWidth / 2}
+                              y={barY + barH / 2 + 3.5}
+                              textAnchor="middle"
+                              fontSize="9"
+                              fill="#ffffff"
+                              fontWeight="600"
+                            >
+                              {isPercentStacked ? `${Math.round((v / total) * 100)}%` : v}
+                            </text>
+                          )}
+                        </g>
+                      );
+                    })}
                   </g>
                 );
-              });
-            })}
+              })
+            ) : (
+              // Clustered Column
+              chart.series.map((series, sIndex) => {
+                const color = series.color ?? defaultColors[sIndex % defaultColors.length];
+                const band = plotWidth / numCategories;
+                const barWidth = Math.max(
+                  4,
+                  Math.min(28, (band * (1 - (chart.gapWidthPct ?? 150) / 400)) / seriesCount),
+                );
+
+                return series.values.map((v, i) => {
+                  const x = paddingLeft + i * band + sIndex * barWidth + (band - seriesCount * barWidth) / 2;
+                  const y = getY(v);
+                  const barH = Math.max(0, paddingTop + plotHeight - y);
+
+                  return (
+                    <g key={`${sIndex}-${i}`}>
+                      <rect
+                        x={x}
+                        y={y}
+                        width={barWidth}
+                        height={barH}
+                        fill={color}
+                        rx={1.5}
+                      />
+                      {showDataLabels && (
+                        <text
+                          x={x + barWidth / 2}
+                          y={Math.max(paddingTop + 10, y - 4)}
+                          textAnchor="middle"
+                          fontSize="9.5"
+                          fill="#333"
+                          fontWeight="500"
+                        >
+                          {v}
+                        </text>
+                      )}
+                    </g>
+                  );
+                });
+              })
+            )}
           </g>
         )}
 
         {/* BAR (HORIZONTAL) CHART */}
         {isBarHorizontal && (
           <g className="chart-horizontal-bars">
-            {chart.series.map((series, sIndex) => {
-              const color = series.color ?? defaultColors[sIndex % defaultColors.length];
-              const band = plotHeight / numCategories;
-              const barHeight = Math.max(
-                4,
-                Math.min(24, (band * 0.75) / seriesCount),
-              );
-
-              return series.values.map((v, i) => {
-                const y = paddingTop + i * band + sIndex * barHeight + (band - seriesCount * barHeight) / 2;
-                const barW = Math.max(0, getX(v) - paddingLeft);
+            {isStacked || isPercentStacked ? (
+              // Stacked / PercentStacked Horizontal Bar
+              categories.map((_, i) => {
+                const band = plotHeight / numCategories;
+                const barHeight = Math.max(6, Math.min(30, band * 0.65));
+                const y = paddingTop + i * band + (band - barHeight) / 2;
+                const total = isPercentStacked ? (catPositiveTotals[i] || 1) : 1;
+                let cumVal = 0;
 
                 return (
-                  <g key={`${sIndex}-${i}`}>
-                    <rect
-                      x={paddingLeft}
-                      y={y}
-                      width={barW}
-                      height={barHeight}
-                      fill={color}
-                      rx={1.5}
-                    />
-                    {showDataLabels && (
-                      <text
-                        x={paddingLeft + barW + 5}
-                        y={y + barHeight / 2 + 3}
-                        fontSize="9.5"
-                        fill="#333"
-                      >
-                        {v}
-                      </text>
-                    )}
+                  <g key={i}>
+                    {chart.series.map((series, sIndex) => {
+                      const v = Math.max(0, series.values[i] ?? 0);
+                      const color = series.color ?? defaultColors[sIndex % defaultColors.length];
+                      const startVal = cumVal;
+                      cumVal += v;
+                      const endVal = cumVal;
+
+                      const x1 = isPercentStacked
+                        ? paddingLeft + (startVal / total) * plotWidth
+                        : getX(startVal);
+                      const x2 = isPercentStacked
+                        ? paddingLeft + (endVal / total) * plotWidth
+                        : getX(endVal);
+                      const barX = Math.min(x1, x2);
+                      const barW = Math.max(0, Math.abs(x2 - x1));
+
+                      return (
+                        <g key={`${sIndex}-${i}`}>
+                          <rect
+                            x={barX}
+                            y={y}
+                            width={barW}
+                            height={barHeight}
+                            fill={color}
+                            stroke="#ffffff"
+                            strokeWidth={0.5}
+                          />
+                          {showDataLabels && barW > 18 && (
+                            <text
+                              x={barX + barW / 2}
+                              y={y + barHeight / 2 + 3.5}
+                              textAnchor="middle"
+                              fontSize="9"
+                              fill="#ffffff"
+                              fontWeight="600"
+                            >
+                              {isPercentStacked ? `${Math.round((v / total) * 100)}%` : v}
+                            </text>
+                          )}
+                        </g>
+                      );
+                    })}
                   </g>
                 );
-              });
-            })}
+              })
+            ) : (
+              // Clustered Horizontal Bar
+              chart.series.map((series, sIndex) => {
+                const color = series.color ?? defaultColors[sIndex % defaultColors.length];
+                const band = plotHeight / numCategories;
+                const barHeight = Math.max(
+                  4,
+                  Math.min(24, (band * 0.75) / seriesCount),
+                );
+
+                return series.values.map((v, i) => {
+                  const y = paddingTop + i * band + sIndex * barHeight + (band - seriesCount * barHeight) / 2;
+                  const barW = Math.max(0, getX(v) - paddingLeft);
+
+                  return (
+                    <g key={`${sIndex}-${i}`}>
+                      <rect
+                        x={paddingLeft}
+                        y={y}
+                        width={barW}
+                        height={barHeight}
+                        fill={color}
+                        rx={1.5}
+                      />
+                      {showDataLabels && (
+                        <text
+                          x={paddingLeft + barW + 5}
+                          y={y + barHeight / 2 + 3}
+                          fontSize="9.5"
+                          fill="#333"
+                        >
+                          {v}
+                        </text>
+                      )}
+                    </g>
+                  );
+                });
+              })
+            )}
           </g>
         )}
 
@@ -386,6 +540,20 @@ export function ChartRenderer({ chart, width, height }: ChartRendererProps): Rea
                 <g key={sIndex}>
                   <path d={areaD} fill={color} opacity={0.35} />
                   <path d={lineD} fill="none" stroke={color} strokeWidth={2} />
+                  {showDataLabels &&
+                    points.map((pt, i) => (
+                      <text
+                        key={`area-lbl-${i}`}
+                        x={pt.x}
+                        y={Math.max(paddingTop + 10, pt.y - 6)}
+                        textAnchor="middle"
+                        fontSize="9.5"
+                        fill={color}
+                        fontWeight="600"
+                      >
+                        {series.values[i]}
+                      </text>
+                    ))}
                 </g>
               );
             })}
@@ -402,14 +570,27 @@ export function ChartRenderer({ chart, width, height }: ChartRendererProps): Rea
                 const x = paddingLeft + i * step + step / 2;
                 const y = getY(v);
                 return (
-                  <circle
-                    key={`${sIndex}-${i}`}
-                    cx={x}
-                    cy={y}
-                    r={4}
-                    fill={color}
-                    opacity={0.8}
-                  />
+                  <g key={`${sIndex}-${i}`}>
+                    <circle
+                      cx={x}
+                      cy={y}
+                      r={4}
+                      fill={color}
+                      opacity={0.8}
+                    />
+                    {showDataLabels && (
+                      <text
+                        x={x}
+                        y={y - 7}
+                        textAnchor="middle"
+                        fontSize="9"
+                        fill={color}
+                        fontWeight="500"
+                      >
+                        {v}
+                      </text>
+                    )}
+                  </g>
                 );
               });
             })}
@@ -456,6 +637,35 @@ export function ChartRenderer({ chart, width, height }: ChartRendererProps): Rea
             })()}
           </g>
         )}
+
+        {/* Value Axis Title */}
+        {hasValAxisTitle && (
+          <text
+            x={paddingLeft - (hasValAxisTitle ? 32 : 24)}
+            y={paddingTop + plotHeight / 2}
+            transform={`rotate(-90 ${paddingLeft - (hasValAxisTitle ? 32 : 24)} ${paddingTop + plotHeight / 2})`}
+            textAnchor="middle"
+            fontSize="11"
+            fontWeight="600"
+            fill="#5f6368"
+          >
+            {chart.axisTitles?.value}
+          </text>
+        )}
+
+        {/* Category Axis Title */}
+        {hasCatAxisTitle && (
+          <text
+            x={paddingLeft + plotWidth / 2}
+            y={paddingTop + plotHeight + 32}
+            textAnchor="middle"
+            fontSize="11"
+            fontWeight="600"
+            fill="#5f6368"
+          >
+            {chart.axisTitles?.category}
+          </text>
+        )}
       </svg>
 
       {/* Legend */}
@@ -480,40 +690,37 @@ export function ChartRenderer({ chart, width, height }: ChartRendererProps): Rea
             overflow: 'hidden',
           }}
         >
-          {chart.series.map((series, index) => {
-            const color = series.color ?? defaultColors[index % defaultColors.length];
-            return (
-              <div
-                key={index}
+          {legendItems.map((item, index) => (
+            <div
+              key={index}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '5px',
+                maxWidth: '120px',
+              }}
+            >
+              <span
                 style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '5px',
-                  maxWidth: '120px',
+                  width: '10px',
+                  height: '10px',
+                  borderRadius: '2px',
+                  background: item.color,
+                  flexShrink: 0,
                 }}
+              />
+              <span
+                style={{
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+                title={item.name}
               >
-                <span
-                  style={{
-                    width: '10px',
-                    height: '10px',
-                    borderRadius: '2px',
-                    background: color,
-                    flexShrink: 0,
-                  }}
-                />
-                <span
-                  style={{
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                  }}
-                  title={series.name}
-                >
-                  {series.name}
-                </span>
-              </div>
-            );
-          })}
+                {item.name}
+              </span>
+            </div>
+          ))}
         </div>
       )}
     </div>

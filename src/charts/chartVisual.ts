@@ -148,12 +148,12 @@ export const CHART_EDIT_TYPES: Record<
 > = {
   column: { chartTypes: ['barChart'], barDirection: 'col' },
   bar: { chartTypes: ['barChart'], barDirection: 'bar' },
-  line: { chartTypes: ['lineChart'] },
-  area: { chartTypes: ['areaChart'] },
-  pie: { chartTypes: ['pieChart'] },
-  doughnut: { chartTypes: ['doughnutChart'] },
-  scatter: { chartTypes: ['scatterChart'] },
-  radar: { chartTypes: ['radarChart'] },
+  line: { chartTypes: ['lineChart'], barDirection: undefined },
+  area: { chartTypes: ['areaChart'], barDirection: undefined },
+  pie: { chartTypes: ['pieChart'], barDirection: undefined },
+  doughnut: { chartTypes: ['doughnutChart'], barDirection: undefined },
+  scatter: { chartTypes: ['scatterChart'], barDirection: undefined },
+  radar: { chartTypes: ['radarChart'], barDirection: undefined },
   combo: { chartTypes: ['barChart', 'lineChart'], barDirection: 'col' },
 };
 
@@ -214,6 +214,10 @@ export function applyChartStateEdit(
       }))
     : chart.series;
   const valueAxis = mergeValueAxis(chart.valueAxis, edit.valueAxis);
+  const barDirection =
+    edit.chartType !== undefined
+      ? typeOverride.barDirection
+      : chart.barDirection;
   return {
     ...chart,
     ...(edit.title === undefined ? {} : { title: edit.title }),
@@ -229,7 +233,9 @@ export function applyChartStateEdit(
     ...(edit.valueAxis === undefined ? {} : { valueAxis }),
     ...(edit.gapWidthPct === undefined ? {} : { gapWidthPct: edit.gapWidthPct }),
     ...(edit.holeSizePct === undefined ? {} : { holeSizePct: edit.holeSizePct }),
+    ...(edit.palette === undefined ? {} : { palette: edit.palette }),
     ...typeOverride,
+    barDirection,
     series: baseSeries.map((series, index) => {
       const color = edit.seriesColors?.[String(index)];
       const pointColors = mergePointColors(series.pointColors, edit.pointColors?.[String(index)]);

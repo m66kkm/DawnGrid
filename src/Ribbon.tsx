@@ -36,6 +36,7 @@ export interface RibbonProps {
   pageBreakPreview?: boolean;
   calcManual?: boolean;
   selectedChart?: boolean;
+  hasCharts?: boolean;
   definedNames?: string[];
 }
 
@@ -94,6 +95,7 @@ export function Ribbon({
   pageBreakPreview = false,
   calcManual = false,
   selectedChart = false,
+  hasCharts = false,
   definedNames = [],
 }: RibbonProps) {
   const [activeTab, setActiveTab] = useState<TabType>("开始");
@@ -156,10 +158,10 @@ export function Ribbon({
   useEffect(() => {
     if (selectedChart && activeTab !== "图表设计") {
       setActiveTab("图表设计");
-    } else if (!selectedChart && activeTab === "图表设计") {
+    } else if (!selectedChart && !hasCharts && activeTab === "图表设计") {
       setActiveTab("开始");
     }
-  }, [selectedChart]);
+  }, [selectedChart, hasCharts]);
 
   // Ribbon horizontal overflow management (< and > scroll buttons)
   const ribbonRef = useRef<HTMLDivElement>(null);
@@ -222,7 +224,7 @@ export function Ribbon({
     }
   };
 
-  const visibleTabs: TabType[] = selectedChart
+  const visibleTabs: TabType[] = selectedChart || hasCharts
     ? [...TABS, "图表设计"]
     : [...TABS];
 
@@ -396,7 +398,12 @@ export function Ribbon({
             className={`tab-btn ${tab === activeTab ? "active" : ""} ${
               tab === "图表设计" ? "contextual" : ""
             }`}
-            onClick={() => setActiveTab(tab)}
+            onClick={() => {
+              setActiveTab(tab);
+              if (tab === "图表设计") {
+                onCommand("activate-chart-tab");
+              }
+            }}
           >
             {tab}
           </button>
