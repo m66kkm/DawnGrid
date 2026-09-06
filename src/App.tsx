@@ -41,7 +41,21 @@ import { SubtotalDialog } from "./SubtotalDialog";
 import { ConsolidateDialog } from "./ConsolidateDialog";
 import { AdvancedFilterDialog } from "./AdvancedFilterDialog";
 import { CustomSortDialog } from "./CustomSortDialog";
-import { NameManagerDialog, type DefinedNameRow } from "./NameManagerDialog";
+import { NameManagerDialog } from "./NameManagerDialog";
+import {
+  type DefinedNameRow,
+  type WatchCellItem,
+  applyAutoSum,
+  createNamesFromSelection,
+  insertDefinedNameIntoFormula,
+  tracePrecedents,
+  traceDependents,
+  clearAuditHighlights,
+  checkFormulaErrors,
+  calculateNow,
+  calculateSheet,
+  WatchWindowDialog,
+} from "./formular";
 import { SymbolDialog } from "./SymbolDialog";
 import { HeaderFooterDialog, type HeaderFooterData } from "./HeaderFooterDialog";
 import { AllowEditRangesDialog, type AllowEditRangeItem } from "./AllowEditRangesDialog";
@@ -115,6 +129,8 @@ export default function App() {
   const [definedNames, setDefinedNames] = useState<DefinedNameRow[]>([
     { name: "SalesData", ref: "=Sheet1!$A$1:$D$10", scope: "工作簿" },
   ]);
+  const [isWatchWindowOpen, setIsWatchWindowOpen] = useState(false);
+  const [watchList, setWatchList] = useState<WatchCellItem[]>([]);
   const [isSymbolOpen, setIsSymbolOpen] = useState(false);
   const [isHeaderFooterOpen, setIsHeaderFooterOpen] = useState(false);
   const [headerFooterData, setHeaderFooterData] = useState<HeaderFooterData>({
@@ -702,6 +718,61 @@ export default function App() {
     }
   }
 
+  // ── 监视窗口 (Watch Window) 处理 ──
+  function handleAddWatch() {
+    const ctx = getTargetRange();
+    if (!ctx) return;
+    const { range, worksheet } = ctx;
+    const addr = range.getA1Notation?.() || "A1";
+    const sheetName = worksheet.getSheetName ? worksheet.getSheetName() : "Sheet1";
+    const wbName = metadata?.name || "当前工作簿";
+    const val = range.getValue?.() ?? "";
+    const form = range.getFormula?.() || "";
+
+    const newItem: WatchCellItem = {
+      id: `${sheetName}!${addr}_${Date.now()}`,
+      workbookName: wbName,
+      sheetName,
+      cellAddress: addr,
+      value: val,
+      formula: form,
+    };
+
+    setWatchList((prev) => [
+      ...prev.filter((w) => !(w.sheetName === sheetName && w.cellAddress === addr)),
+      newItem,
+    ]);
+    setStatus(`已将单元格 ${sheetName}!${addr} 添加到监视窗口`);
+  }
+
+  function handleDeleteWatch(id: string) {
+    setWatchList((prev) => prev.filter((w) => w.id !== id));
+    setStatus("已从监视列表中移除该单元格");
+  }
+
+  function handleRefreshWatch() {
+    const ctx = getTargetRange();
+    if (!ctx) return;
+    const { worksheet } = ctx;
+    setWatchList((prev) =>
+      prev.map((item) => {
+        const pos = parseA1Notation(item.cellAddress);
+        if (!pos) return item;
+        try {
+          const cell = worksheet.getRange(pos.row, pos.col, 1, 1);
+          return {
+            ...item,
+            value: cell.getValue?.() ?? "",
+            formula: cell.getFormula?.() || "",
+          };
+        } catch {
+          return item;
+        }
+      })
+    );
+    setStatus("监视窗口数据已刷新");
+  }
+
   // ── Data Tab Dialog Handlers ──
   function handleCreatePivot(config: PivotConfig) {
     const ctx = getTargetRange();
@@ -869,6 +940,22 @@ export default function App() {
     const ctx = getTargetRange();
     if (!ctx) return;
     const { runtime, workbook, worksheet, range } = ctx;
+
+    if (cmd === "autofn" || cmd.startsWith("autofn:")) {
+      const fn = cmd.includes(":") ? cmd.split(":")[1] : (args[0] || "SUM");
+      const res = applyAutoSum(worksheet, range, fn);
+      setStatus(res.message);
+      syncSelectionState();
+      return;
+    }
+
+    if (cmd.startsWith("use-in-formula:")) {
+      const name = cmd.slice("use-in-formula:".length);
+      const f = insertDefinedNameIntoFormula(range, name);
+      setStatus(`已在公式中插入名称: ${name} (${f})`);
+      syncSelectionState();
+      return;
+    }
 
     try {
       switch (cmd) {
@@ -1451,19 +1538,15 @@ export default function App() {
 
         // ── 公式 (Formulas) ──
         case "insert-function-open": {
+          setInsertFuncCategory(args[0] || "Common");
           setIsInsertFuncOpen(true);
           break;
         }
         case "autofn": {
           const fn = args[0] || "SUM";
-          const row = range.getRow();
-          const col = range.getColumn();
-          const colName = getColumnName(col);
-          const startRowIndex = row > 1 ? 1 : 0;
-          const endRowIndex = Math.max(startRowIndex, row - 1);
-          const formula = `=${fn}(${colName}${startRowIndex + 1}:${colName}${endRowIndex + 1})`;
-          range.setFormula(formula);
-          setStatus(`已应用公式: ${formula}`);
+          const res = applyAutoSum(worksheet, range, fn);
+          setStatus(res.message);
+          syncSelectionState();
           break;
         }
         case "name-manager-open": {
@@ -1471,42 +1554,48 @@ export default function App() {
           break;
         }
         case "create-names:top": {
-          const nameVal = String(worksheet.getRange(range.getRow(), range.getColumn(), 1, 1).getValue() || "Range1");
-          const cleanName = nameVal.replace(/[^A-Za-z0-9_]/g, "") || "Range1";
-          setDefinedNames((prev) => [...prev.filter((x) => x.name !== cleanName), { name: cleanName, ref: `=${range.getA1Notation()}`, scope: "工作簿" }]);
-          setStatus(`已根据顶端行创建名称: ${cleanName} -> ${range.getA1Notation()}`);
+          const res = createNamesFromSelection(worksheet, range, "top", definedNames);
+          if (res.success) {
+            setDefinedNames(res.updatedList);
+          }
+          setStatus(res.message);
           break;
         }
         case "create-names:left": {
-          const nameVal = String(worksheet.getRange(range.getRow(), range.getColumn(), 1, 1).getValue() || "Range1");
-          const cleanName = nameVal.replace(/[^A-Za-z0-9_]/g, "") || "Range1";
-          setDefinedNames((prev) => [...prev.filter((x) => x.name !== cleanName), { name: cleanName, ref: `=${range.getA1Notation()}`, scope: "工作簿" }]);
-          setStatus(`已根据最左列创建名称: ${cleanName} -> ${range.getA1Notation()}`);
+          const res = createNamesFromSelection(worksheet, range, "left", definedNames);
+          if (res.success) {
+            setDefinedNames(res.updatedList);
+          }
+          setStatus(res.message);
           break;
         }
         case "trace-precedents": {
-          setStatus(`追踪引用单元格：当前选区 ${range.getA1Notation()} 引用了前置数据源`);
+          const res = tracePrecedents(worksheet, range);
+          setStatus(res.message);
           break;
         }
         case "trace-dependents": {
-          setStatus(`追踪从属单元格：当前选区 ${range.getA1Notation()} 参与后续汇总计算`);
+          const res = traceDependents(worksheet, range);
+          setStatus(res.message);
           break;
         }
         case "remove-arrows": {
-          setStatus("已移去所有公式追踪箭头");
+          clearAuditHighlights(worksheet);
+          setStatus("已移去所有公式追踪高亮与箭头");
           break;
         }
         case "toggle-show-formulas": {
-          const curFormula = range.getFormula();
+          const curFormula = range.getFormula?.();
           if (curFormula) {
-            setStatus(`公式明细: ${curFormula}`);
+            setStatus(`公式明细 (${range.getA1Notation()}): ${curFormula}`);
           } else {
-            setStatus("显示公式：当前活动单元格为静态值");
+            const val = range.getValue?.();
+            setStatus(`单元格 (${range.getA1Notation()}) 为静态值: ${val != null ? String(val) : "空"}`);
           }
           break;
         }
         case "watch-window": {
-          setStatus(`监视窗口：已添加单元格 ${range.getA1Notation()} (当前值: ${range.getValue() ?? ""}) 到监视列表`);
+          setIsWatchWindowOpen(true);
           break;
         }
         case "calc-mode:auto": {
@@ -1520,36 +1609,19 @@ export default function App() {
           break;
         }
         case "calculate-now": {
-          setStatus("已执行全簿公式重新计算 (Calculate Now)");
+          const res = calculateNow(workbook);
+          setStatus(res.message);
           break;
         }
         case "calculate-sheet": {
-          setStatus("已执行当前工作表重新计算 (Calculate Sheet)");
+          const res = calculateSheet(worksheet);
+          setStatus(res.message);
           break;
         }
         case "error-checking": {
-          let errorCount = 0;
-          const maxR = Math.min(50, worksheet.getMaxRows());
-          const maxC = Math.min(20, worksheet.getMaxColumns());
-          for (let r = 0; r < maxR; r++) {
-            for (let c = 0; c < maxC; c++) {
-              const val = String(worksheet.getRange(r, c, 1, 1).getValue() || "");
-              if (
-                val.includes("#DIV/0!") ||
-                val.includes("#REF!") ||
-                val.includes("#VALUE!") ||
-                val.includes("#NAME?")
-              ) {
-                errorCount++;
-              }
-            }
-          }
-          const resultMsg =
-            errorCount === 0
-              ? "全表体检完毕：数据完整，未发现任何公式错误 (#DIV/0!, #REF!, #VALUE!)"
-              : `全表体检完成：共发现 ${errorCount} 处潜在公式错误，请及时检查修正。`;
-          setDiagnosticResult(resultMsg);
-          setStatus(resultMsg);
+          const res = checkFormulaErrors(worksheet);
+          setDiagnosticResult(res.message);
+          setStatus(res.message);
           break;
         }
 
@@ -2422,6 +2494,17 @@ export default function App() {
           setDefinedNames((prev) => prev.filter((x) => x.name !== name));
           setStatus(`已删除名称: ${name}`);
         }}
+      />
+
+      {/* Watch Window Dialog */}
+      <WatchWindowDialog
+        isOpen={isWatchWindowOpen}
+        onClose={() => setIsWatchWindowOpen(false)}
+        watchList={watchList}
+        onAddWatch={handleAddWatch}
+        onDeleteWatch={handleDeleteWatch}
+        onRefresh={handleRefreshWatch}
+        onJumpToCell={handleGoToAddress}
       />
 
       {/* Symbol Dialog */}
