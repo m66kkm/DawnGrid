@@ -1622,3 +1622,59 @@ button.check-item:hover {
   display: none;
 }
 
+/* ========================================================= */
+/* Chart Animations & Visual Transitions (Color & Type Morphs) */
+/* ========================================================= */
+.chart-container-inner {
+  transition: box-shadow 0.3s ease, filter 0.3s ease;
+}
+
+.chart-container-inner.palette-pulse {
+  animation: chartPalettePulse 0.55s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes chartPalettePulse {
+  0% {
+    filter: brightness(1);
+    box-shadow: 0 0 0 rgba(33, 115, 70, 0);
+  }
+  35% {
+    filter: brightness(1.05);
+    box-shadow: inset 0 0 16px rgba(33, 115, 70, 0.12), 0 0 16px rgba(33, 115, 70, 0.18);
+  }
+  100% {
+    filter: brightness(1);
+    box-shadow: 0 0 0 rgba(33, 115, 70, 0);
+  }
+}
+
+.chart-elem-transition {
+  transition: fill 0.45s cubic-bezier(0.16, 1, 0.3, 1),
+              stroke 0.45s cubic-bezier(0.16, 1, 0.3, 1),
+              opacity 0.4s cubic-bezier(0.16, 1, 0.3, 1),
+              filter 0.2s ease,
+              transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.chart-elem-transition:hover {
+  filter: brightness(1.12);
+  cursor: pointer;
+}
+
+.chart-legend {
+  transition: all 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.chart-legend-item {
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+.chart-legend-item:hover {
+  transform: translateX(2px);
+  cursor: pointer;
+}
+
+.chart-legend-color-dot {
+  transition: background-color 0.45s cubic-bezier(0.16, 1, 0.3, 1), transform 0.2s ease;
+}
+

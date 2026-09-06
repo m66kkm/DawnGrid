@@ -1,7 +1,7 @@
 // src/charts/chartRenderer.tsx
-// Full-featured SVG Chart renderer for on-sheet interactive visual objects
+// Full-featured SVG Chart renderer with smooth color & type transition animations
 
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import type { ChartVisualState } from './types';
 import { COLOR_PALETTES } from './types';
 import { formatCategoryLabel, valueAxisScale } from './chartVisual';
@@ -33,6 +33,38 @@ export function ChartRenderer({ chart, width, height }: ChartRendererProps): Rea
   const isLine = types.includes('lineChart') && !types.includes('barChart');
   const isArea = types.includes('areaChart') && !types.includes('barChart');
   const isCombo = types.includes('barChart') && types.includes('lineChart');
+
+  // Compute active chart mode for animation keying
+  const chartMode = isPie
+    ? (isDoughnut ? 'doughnut' : 'pie')
+    : isBarHorizontal
+      ? 'bar'
+      : isLine
+        ? 'line'
+        : isArea
+          ? 'area'
+          : isScatter
+            ? 'scatter'
+            : isRadar
+              ? 'radar'
+              : isCombo
+                ? 'combo'
+                : 'column';
+  const groupMode = chart.grouping || 'clustered';
+  const chartTypeAnimKey = `${chartMode}-${groupMode}`;
+
+  // Palette change pulse feedback
+  const [pulsePalette, setPulsePalette] = useState(false);
+  const prevPaletteRef = useRef(chart.palette);
+
+  useEffect(() => {
+    if (chart.palette && chart.palette !== prevPaletteRef.current) {
+      prevPaletteRef.current = chart.palette;
+      setPulsePalette(true);
+      const timer = setTimeout(() => setPulsePalette(false), 550);
+      return () => clearTimeout(timer);
+    }
+  }, [chart.palette]);
 
   // Axis title checks
   const hasCatAxisTitle = Boolean(chart.axisTitles?.category && !isPie && !isRadar);
@@ -108,7 +140,7 @@ export function ChartRenderer({ chart, width, height }: ChartRendererProps): Rea
 
   return (
     <div
-      className="chart-container-inner"
+      className={`chart-container-inner ${pulsePalette ? 'palette-pulse' : ''}`}
       style={{
         width,
         height,
@@ -142,6 +174,128 @@ export function ChartRenderer({ chart, width, height }: ChartRendererProps): Rea
       )}
 
       <svg width={width} height={height} style={{ display: 'block', overflow: 'visible' }}>
+        <style>{`
+          /* Smooth color transitions for palette switching */
+          .chart-elem-transition {
+            transition: fill 0.45s cubic-bezier(0.16, 1, 0.3, 1),
+                        stroke 0.45s cubic-bezier(0.16, 1, 0.3, 1),
+                        opacity 0.4s cubic-bezier(0.16, 1, 0.3, 1),
+                        filter 0.2s ease,
+                        transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+          }
+          .chart-elem-transition:hover {
+            filter: brightness(1.12);
+            cursor: pointer;
+          }
+
+          /* Column Bar Entrance */
+          @keyframes chartColBarGrow {
+            0% { transform: scaleY(0); opacity: 0; }
+            65% { transform: scaleY(1.04); opacity: 0.95; }
+            100% { transform: scaleY(1); opacity: 1; }
+          }
+          .chart-col-bar {
+            transform-box: fill-box;
+            transform-origin: bottom center;
+            animation: chartColBarGrow 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
+          }
+
+          /* Horizontal Bar Entrance */
+          @keyframes chartHorizBarGrow {
+            0% { transform: scaleX(0); opacity: 0; }
+            65% { transform: scaleX(1.04); opacity: 0.95; }
+            100% { transform: scaleX(1); opacity: 1; }
+          }
+          .chart-horiz-bar {
+            transform-box: fill-box;
+            transform-origin: left center;
+            animation: chartHorizBarGrow 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
+          }
+
+          /* Line Path Entrance */
+          @keyframes chartLineEnter {
+            0% { opacity: 0; transform: translateY(14px) scaleY(0.9); }
+            100% { opacity: 1; transform: translateY(0) scaleY(1); }
+          }
+          .chart-line-path {
+            transform-origin: bottom center;
+            animation: chartLineEnter 0.48s cubic-bezier(0.16, 1, 0.3, 1) both;
+          }
+
+          /* Point Pop Entrance */
+          @keyframes chartPointPop {
+            0% { transform: scale(0); opacity: 0; }
+            65% { transform: scale(1.4); opacity: 0.95; }
+            100% { transform: scale(1); opacity: 1; }
+          }
+          .chart-point-dot {
+            transform-box: fill-box;
+            transform-origin: center;
+            animation: chartPointPop 0.42s cubic-bezier(0.16, 1, 0.3, 1) both;
+          }
+          .chart-point-dot:hover {
+            transform: scale(1.6) !important;
+            cursor: pointer;
+          }
+
+          /* Area Fill Entrance */
+          @keyframes chartAreaEnter {
+            0% { opacity: 0; transform: scaleY(0.2); }
+            100% { opacity: 0.35; transform: scaleY(1); }
+          }
+          .chart-area-fill {
+            transform-box: fill-box;
+            transform-origin: bottom center;
+            animation: chartAreaEnter 0.48s cubic-bezier(0.16, 1, 0.3, 1) both;
+          }
+
+          /* Pie Slice Entrance */
+          @keyframes chartPieSliceEnter {
+            0% { transform: scale(0.62) rotate(-16deg); opacity: 0; }
+            70% { transform: scale(1.03) rotate(2deg); opacity: 0.95; }
+            100% { transform: scale(1) rotate(0deg); opacity: 1; }
+          }
+          .chart-pie-slice {
+            transform-box: fill-box;
+            transform-origin: center;
+            animation: chartPieSliceEnter 0.48s cubic-bezier(0.16, 1, 0.3, 1) both;
+          }
+          .chart-pie-slice:hover {
+            transform: scale(1.045) !important;
+            filter: brightness(1.1);
+            cursor: pointer;
+          }
+
+          /* Doughnut Hole Animation */
+          @keyframes chartHolePop {
+            0% { transform: scale(0); opacity: 0; }
+            100% { transform: scale(1); opacity: 1; }
+          }
+          .chart-animated-doughnut-hole {
+            transform-box: fill-box;
+            transform-origin: center;
+            animation: chartHolePop 0.42s cubic-bezier(0.16, 1, 0.3, 1) both;
+          }
+
+          /* Radar Polygon Animation */
+          @keyframes chartRadarEnter {
+            0% { transform: scale(0.3); opacity: 0; }
+            100% { transform: scale(1); opacity: 0.3; }
+          }
+          .chart-radar-poly {
+            animation: chartRadarEnter 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
+          }
+
+          /* Data Label Fade & Rise Animation */
+          @keyframes chartLabelEnter {
+            0% { opacity: 0; transform: translateY(6px); }
+            100% { opacity: 1; transform: translateY(0); }
+          }
+          .chart-data-label {
+            animation: chartLabelEnter 0.38s cubic-bezier(0.16, 1, 0.3, 1) both;
+          }
+        `}</style>
+
         {/* Gridlines & Value Axis */}
         {showGrid && (
           <g className="chart-gridlines">
@@ -210,7 +364,7 @@ export function ChartRenderer({ chart, width, height }: ChartRendererProps): Rea
 
         {/* PIE / DOUGHNUT CHART */}
         {isPie && (
-          <g className="chart-pie-group">
+          <g key={`pie-${chartTypeAnimKey}`} className="chart-pie-group">
             {(() => {
               const cx = paddingLeft + plotWidth / 2;
               const cy = paddingTop + plotHeight / 2;
@@ -242,7 +396,14 @@ export function ChartRenderer({ chart, width, height }: ChartRendererProps): Rea
 
                     return (
                       <g key={i}>
-                        <path d={d} fill={color} stroke="#ffffff" strokeWidth={1.5} />
+                        <path
+                          d={d}
+                          fill={color}
+                          stroke="#ffffff"
+                          strokeWidth={1.5}
+                          className="chart-pie-slice chart-elem-transition"
+                          style={{ animationDelay: `${i * 45}ms` }}
+                        />
                         {showDataLabels && sweep > 0.15 && (
                           <text
                             x={labelX}
@@ -251,6 +412,8 @@ export function ChartRenderer({ chart, width, height }: ChartRendererProps): Rea
                             fontSize="10"
                             fontWeight="bold"
                             fill="#ffffff"
+                            className="chart-data-label"
+                            style={{ animationDelay: `${i * 45 + 150}ms` }}
                           >
                             {pct}%
                           </text>
@@ -264,6 +427,7 @@ export function ChartRenderer({ chart, width, height }: ChartRendererProps): Rea
                       cy={cy}
                       r={radius * ((chart.holeSizePct ?? 50) / 100)}
                       fill="#ffffff"
+                      className="chart-animated-doughnut-hole"
                     />
                   )}
                 </>
@@ -274,7 +438,7 @@ export function ChartRenderer({ chart, width, height }: ChartRendererProps): Rea
 
         {/* COLUMN CHART */}
         {!isPie && !isBarHorizontal && !isRadar && !isLine && !isArea && (
-          <g className="chart-bars-group">
+          <g key={`col-${chartTypeAnimKey}`} className="chart-bars-group">
             {isStacked || isPercentStacked ? (
               // Stacked / PercentStacked Column
               categories.map((_, i) => {
@@ -312,6 +476,8 @@ export function ChartRenderer({ chart, width, height }: ChartRendererProps): Rea
                             fill={color}
                             stroke="#ffffff"
                             strokeWidth={0.5}
+                            className="chart-col-bar chart-elem-transition"
+                            style={{ animationDelay: `${i * 35 + sIndex * 20}ms` }}
                           />
                           {showDataLabels && barH > 14 && (
                             <text
@@ -321,6 +487,8 @@ export function ChartRenderer({ chart, width, height }: ChartRendererProps): Rea
                               fontSize="9"
                               fill="#ffffff"
                               fontWeight="600"
+                              className="chart-data-label"
+                              style={{ animationDelay: `${i * 35 + sIndex * 20 + 120}ms` }}
                             >
                               {isPercentStacked ? `${Math.round((v / total) * 100)}%` : v}
                             </text>
@@ -355,6 +523,8 @@ export function ChartRenderer({ chart, width, height }: ChartRendererProps): Rea
                         height={barH}
                         fill={color}
                         rx={1.5}
+                        className="chart-col-bar chart-elem-transition"
+                        style={{ animationDelay: `${i * 35 + sIndex * 20}ms` }}
                       />
                       {showDataLabels && (
                         <text
@@ -364,6 +534,8 @@ export function ChartRenderer({ chart, width, height }: ChartRendererProps): Rea
                           fontSize="9.5"
                           fill="#333"
                           fontWeight="500"
+                          className="chart-data-label"
+                          style={{ animationDelay: `${i * 35 + sIndex * 20 + 120}ms` }}
                         >
                           {v}
                         </text>
@@ -378,7 +550,7 @@ export function ChartRenderer({ chart, width, height }: ChartRendererProps): Rea
 
         {/* BAR (HORIZONTAL) CHART */}
         {isBarHorizontal && (
-          <g className="chart-horizontal-bars">
+          <g key={`bar-${chartTypeAnimKey}`} className="chart-horizontal-bars">
             {isStacked || isPercentStacked ? (
               // Stacked / PercentStacked Horizontal Bar
               categories.map((_, i) => {
@@ -416,6 +588,8 @@ export function ChartRenderer({ chart, width, height }: ChartRendererProps): Rea
                             fill={color}
                             stroke="#ffffff"
                             strokeWidth={0.5}
+                            className="chart-horiz-bar chart-elem-transition"
+                            style={{ animationDelay: `${i * 35 + sIndex * 20}ms` }}
                           />
                           {showDataLabels && barW > 18 && (
                             <text
@@ -425,6 +599,8 @@ export function ChartRenderer({ chart, width, height }: ChartRendererProps): Rea
                               fontSize="9"
                               fill="#ffffff"
                               fontWeight="600"
+                              className="chart-data-label"
+                              style={{ animationDelay: `${i * 35 + sIndex * 20 + 120}ms` }}
                             >
                               {isPercentStacked ? `${Math.round((v / total) * 100)}%` : v}
                             </text>
@@ -458,6 +634,8 @@ export function ChartRenderer({ chart, width, height }: ChartRendererProps): Rea
                         height={barHeight}
                         fill={color}
                         rx={1.5}
+                        className="chart-horiz-bar chart-elem-transition"
+                        style={{ animationDelay: `${i * 35 + sIndex * 20}ms` }}
                       />
                       {showDataLabels && (
                         <text
@@ -465,6 +643,8 @@ export function ChartRenderer({ chart, width, height }: ChartRendererProps): Rea
                           y={y + barHeight / 2 + 3}
                           fontSize="9.5"
                           fill="#333"
+                          className="chart-data-label"
+                          style={{ animationDelay: `${i * 35 + sIndex * 20 + 120}ms` }}
                         >
                           {v}
                         </text>
@@ -479,7 +659,7 @@ export function ChartRenderer({ chart, width, height }: ChartRendererProps): Rea
 
         {/* LINE / COMBO CHART */}
         {(isLine || isCombo) && (
-          <g className="chart-lines-group">
+          <g key={`line-${chartTypeAnimKey}`} className="chart-lines-group">
             {chart.series.map((series, sIndex) => {
               if (isCombo && sIndex === 0 && chart.series.length > 1) return null;
               const color = series.color ?? defaultColors[sIndex % defaultColors.length];
@@ -497,9 +677,25 @@ export function ChartRenderer({ chart, width, height }: ChartRendererProps): Rea
 
               return (
                 <g key={sIndex}>
-                  <path d={pathD} fill="none" stroke={color} strokeWidth={2.5} />
+                  <path
+                    d={pathD}
+                    fill="none"
+                    stroke={color}
+                    strokeWidth={2.5}
+                    className="chart-line-path chart-elem-transition"
+                  />
                   {points.map((pt, i) => (
-                    <circle key={i} cx={pt.x} cy={pt.y} r={3.5} fill="#ffffff" stroke={color} strokeWidth={2} />
+                    <circle
+                      key={i}
+                      cx={pt.x}
+                      cy={pt.y}
+                      r={3.5}
+                      fill="#ffffff"
+                      stroke={color}
+                      strokeWidth={2}
+                      className="chart-point-dot chart-elem-transition"
+                      style={{ animationDelay: `${i * 35}ms` }}
+                    />
                   ))}
                   {showDataLabels &&
                     points.map((pt, i) => (
@@ -511,6 +707,8 @@ export function ChartRenderer({ chart, width, height }: ChartRendererProps): Rea
                         fontSize="9.5"
                         fill={color}
                         fontWeight="600"
+                        className="chart-data-label"
+                        style={{ animationDelay: `${i * 35 + 140}ms` }}
                       >
                         {pt.val}
                       </text>
@@ -523,7 +721,7 @@ export function ChartRenderer({ chart, width, height }: ChartRendererProps): Rea
 
         {/* AREA CHART */}
         {isArea && (
-          <g className="chart-area-group">
+          <g key={`area-${chartTypeAnimKey}`} className="chart-area-group">
             {chart.series.map((series, sIndex) => {
               const color = series.color ?? defaultColors[sIndex % defaultColors.length];
               const step = plotWidth / Math.max(series.values.length - 1, 1);
@@ -538,8 +736,19 @@ export function ChartRenderer({ chart, width, height }: ChartRendererProps): Rea
 
               return (
                 <g key={sIndex}>
-                  <path d={areaD} fill={color} opacity={0.35} />
-                  <path d={lineD} fill="none" stroke={color} strokeWidth={2} />
+                  <path
+                    d={areaD}
+                    fill={color}
+                    opacity={0.35}
+                    className="chart-area-fill chart-elem-transition"
+                  />
+                  <path
+                    d={lineD}
+                    fill="none"
+                    stroke={color}
+                    strokeWidth={2}
+                    className="chart-line-path chart-elem-transition"
+                  />
                   {showDataLabels &&
                     points.map((pt, i) => (
                       <text
@@ -550,6 +759,8 @@ export function ChartRenderer({ chart, width, height }: ChartRendererProps): Rea
                         fontSize="9.5"
                         fill={color}
                         fontWeight="600"
+                        className="chart-data-label"
+                        style={{ animationDelay: `${i * 35 + 140}ms` }}
                       >
                         {series.values[i]}
                       </text>
@@ -562,7 +773,7 @@ export function ChartRenderer({ chart, width, height }: ChartRendererProps): Rea
 
         {/* SCATTER CHART */}
         {isScatter && (
-          <g className="chart-scatter-group">
+          <g key={`scatter-${chartTypeAnimKey}`} className="chart-scatter-group">
             {chart.series.map((series, sIndex) => {
               const color = series.color ?? defaultColors[sIndex % defaultColors.length];
               const step = plotWidth / Math.max(series.values.length, 1);
@@ -574,9 +785,11 @@ export function ChartRenderer({ chart, width, height }: ChartRendererProps): Rea
                     <circle
                       cx={x}
                       cy={y}
-                      r={4}
+                      r={4.5}
                       fill={color}
-                      opacity={0.8}
+                      opacity={0.85}
+                      className="chart-point-dot chart-elem-transition"
+                      style={{ animationDelay: `${i * 25}ms` }}
                     />
                     {showDataLabels && (
                       <text
@@ -586,6 +799,8 @@ export function ChartRenderer({ chart, width, height }: ChartRendererProps): Rea
                         fontSize="9"
                         fill={color}
                         fontWeight="500"
+                        className="chart-data-label"
+                        style={{ animationDelay: `${i * 25 + 120}ms` }}
                       >
                         {v}
                       </text>
@@ -599,7 +814,7 @@ export function ChartRenderer({ chart, width, height }: ChartRendererProps): Rea
 
         {/* RADAR CHART */}
         {isRadar && (
-          <g className="chart-radar-group">
+          <g key={`radar-${chartTypeAnimKey}`} className="chart-radar-group">
             {(() => {
               const cx = paddingLeft + plotWidth / 2;
               const cy = paddingTop + plotHeight / 2;
@@ -628,7 +843,15 @@ export function ChartRenderer({ chart, width, height }: ChartRendererProps): Rea
                       .join(' ');
                     return (
                       <g key={sIndex}>
-                        <polygon points={pts} fill={color} opacity={0.3} stroke={color} strokeWidth={2} />
+                        <polygon
+                          points={pts}
+                          fill={color}
+                          opacity={0.3}
+                          stroke={color}
+                          strokeWidth={2}
+                          className="chart-radar-poly chart-elem-transition"
+                          style={{ transformOrigin: `${cx}px ${cy}px` }}
+                        />
                       </g>
                     );
                   })}
@@ -688,25 +911,30 @@ export function ChartRenderer({ chart, width, height }: ChartRendererProps): Rea
             fontSize: '11px',
             color: '#444',
             overflow: 'hidden',
+            transition: 'all 0.35s cubic-bezier(0.16, 1, 0.3, 1)',
           }}
         >
           {legendItems.map((item, index) => (
             <div
               key={index}
+              className="chart-legend-item"
               style={{
                 display: 'flex',
                 alignItems: 'center',
                 gap: '5px',
                 maxWidth: '120px',
+                transition: 'transform 0.2s ease, opacity 0.2s ease',
               }}
             >
               <span
+                className="chart-legend-color-dot"
                 style={{
                   width: '10px',
                   height: '10px',
                   borderRadius: '2px',
                   background: item.color,
                   flexShrink: 0,
+                  transition: 'background-color 0.45s cubic-bezier(0.16, 1, 0.3, 1), transform 0.2s ease',
                 }}
               />
               <span
