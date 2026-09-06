@@ -1,13 +1,274 @@
 // src/charts/RecommendedChartsDialog.tsx
-// Recommended Charts dialog with dual-panel layout and live SVG previews
+// 100% GenOffice Parity: Excel's Insert -> Recommended Charts dialog
+// Displays recommended chart cards sketched from actual selection with mini SVG previews.
+// One click on any card directly inserts the chart and closes the dialog.
 
-import React, { useState } from 'react';
-import type { ChartRecommendations, RecommendedKind } from './types';
-import { ChartSvgPreview } from './chartSvgPreview';
-import { KIND_NAMES, REASON_DESCRIPTIONS } from './chartRecommend';
+import React from 'react';
+import type { ChartRecommendations, RecommendedKind, RecommendReason } from './types';
 import { useCssTransitionMount } from './useCssTransitionMount';
 
-interface RecommendedChartsDialogProps {
+const PALETTE = ['#4472c4', '#ed7d31', '#a5a5a5', '#ffc000', '#5b9bd5', '#70ad47'];
+const W = 180;
+const H = 104;
+const PAD = 8;
+
+const KIND_LABEL: Record<RecommendedKind, string> = {
+  column: '柱形图',
+  bar: '条形图',
+  line: '折线图',
+  area: '面积图',
+  pie: '饼图',
+  doughnut: '圆环图',
+  scatter: '散点图',
+  radar: '雷达图',
+  combo: '组合图',
+};
+
+const REASON_LABEL: Record<RecommendReason, string> = {
+  time: '时间序列适合用趋势展示',
+  proportion: '少量类别适合看整体占比',
+  correlation: '两列数值适合看相关性',
+  comparison: '适合比较各类别的数值',
+  manyPoints: '数据点较多，折线更清晰',
+  longLabels: '类别名较长，条形图更易读',
+  mixedScales: '两个系列量级差异大，适合组合图',
+};
+
+interface PreviewSeries {
+  color: string;
+  points: number[];
+}
+
+/// Values normalized to 0..1 with a shared scale, capped for legibility.
+function previewSeries(parsed: ChartRecommendations['parsed'], maxPoints: number): PreviewSeries[] {
+  const series = parsed.series.slice(0, 3);
+  const sliced = series.map((entry) => entry.values.slice(0, maxPoints));
+  const flat = sliced.flat();
+  const top = Math.max(...flat, 0);
+  const bottom = Math.min(...flat, 0);
+  const span = top - bottom || 1;
+  return sliced.map((values, index) => ({
+    color: PALETTE[index % PALETTE.length] ?? '#4472c4',
+    points: values.map((value) => (value - bottom) / span),
+  }));
+}
+
+function linePath(points: number[], plotWidth: number): string {
+  const step = points.length > 1 ? plotWidth / (points.length - 1) : 0;
+  return points
+    .map(
+      (value, index) =>
+        `${index === 0 ? 'M' : 'L'}${(PAD + index * step).toFixed(1)},${(H - PAD - value * (H - PAD * 2)).toFixed(1)}`,
+    )
+    .join(' ');
+}
+
+function pieSlices(values: number[]): { d: string; color: string }[] {
+  const total = values.reduce((sum, value) => sum + Math.max(value, 0), 0) || 1;
+  const cx = W / 2;
+  const cy = H / 2;
+  const r = H / 2 - PAD;
+  let angle = -Math.PI / 2;
+  return values.slice(0, 8).map((value, index) => {
+    const sweep = (Math.max(value, 0) / total) * Math.PI * 2;
+    const from = angle;
+    angle += sweep;
+    const x1 = cx + r * Math.cos(from);
+    const y1 = cy + r * Math.sin(from);
+    const x2 = cx + r * Math.cos(angle);
+    const y2 = cy + r * Math.sin(angle);
+    return {
+      d: `M${cx},${cy} L${x1.toFixed(1)},${y1.toFixed(1)} A${r},${r} 0 ${sweep > Math.PI ? 1 : 0} 1 ${x2.toFixed(1)},${y2.toFixed(1)} Z`,
+      color: PALETTE[index % PALETTE.length] ?? '#4472c4',
+    };
+  });
+}
+
+function ChartPreview({
+  kind,
+  parsed,
+}: {
+  readonly kind: RecommendedKind;
+  readonly parsed: ChartRecommendations['parsed'];
+}): React.JSX.Element {
+  const plotWidth = W - PAD * 2;
+  const plotHeight = H - PAD * 2;
+  const content = (): React.JSX.Element => {
+    switch (kind) {
+      case 'pie':
+      case 'doughnut': {
+        const first = parsed.series[0];
+        return (
+          <>
+            {pieSlices(first?.values ?? []).map((slice, index) => (
+              <path key={index} d={slice.d} fill={slice.color} />
+            ))}
+            {kind === 'doughnut' && (
+              <circle cx={W / 2} cy={H / 2} r={(H / 2 - PAD) * 0.55} fill="var(--surface, #fff)" />
+            )}
+          </>
+        );
+      }
+      case 'bar': {
+        const series = previewSeries(parsed, 6);
+        const groups = series[0]?.points.length ?? 0;
+        const band = plotHeight / Math.max(groups, 1);
+        const barHeight = Math.min(10, (band * 0.7) / Math.max(series.length, 1));
+        return (
+          <>
+            {series.map((entry, seriesIndex) =>
+              entry.points.map((value, index) => (
+                <rect
+                  key={`${seriesIndex}-${index}`}
+                  x={PAD}
+                  y={PAD + index * band + seriesIndex * barHeight + band * 0.15}
+                  width={Math.max(2, value * plotWidth)}
+                  height={barHeight}
+                  fill={entry.color}
+                />
+              )),
+            )}
+          </>
+        );
+      }
+      case 'line':
+      case 'area': {
+        const series = previewSeries(parsed, 12);
+        return (
+          <>
+            {series.map((entry, index) => (
+              <g key={index}>
+                {kind === 'area' && (
+                  <path
+                    d={`${linePath(entry.points, plotWidth)} L${W - PAD},${H - PAD} L${PAD},${H - PAD} Z`}
+                    fill={entry.color}
+                    opacity={0.35}
+                  />
+                )}
+                <path
+                  d={linePath(entry.points, plotWidth)}
+                  fill="none"
+                  stroke={entry.color}
+                  strokeWidth={2}
+                />
+              </g>
+            ))}
+          </>
+        );
+      }
+      case 'scatter': {
+        const [xs, ys] = previewSeries(parsed, 24);
+        const points = ys ?? xs;
+        const xPoints = ys ? (xs?.points ?? []) : [];
+        return (
+          <>
+            {(points?.points ?? []).map((value, index) => (
+              <circle
+                key={index}
+                cx={
+                  PAD +
+                  (xPoints[index] ?? index / Math.max((points?.points.length ?? 1) - 1, 1)) *
+                    plotWidth
+                }
+                cy={H - PAD - value * plotHeight}
+                r={2.5}
+                fill={PALETTE[0]}
+              />
+            ))}
+          </>
+        );
+      }
+      case 'radar': {
+        const series = previewSeries(parsed, 8);
+        const count = series[0]?.points.length ?? 3;
+        const cx = W / 2;
+        const cy = H / 2;
+        const radius = H / 2 - PAD;
+        const vertex = (value: number, index: number): string => {
+          const angle = -Math.PI / 2 + (index / count) * Math.PI * 2;
+          return `${(cx + radius * value * Math.cos(angle)).toFixed(1)},${(cy + radius * value * Math.sin(angle)).toFixed(1)}`;
+        };
+        return (
+          <>
+            <polygon
+              points={Array.from({ length: count }, (_, index) => vertex(1, index)).join(' ')}
+              fill="none"
+              stroke="var(--border, #ccc)"
+            />
+            {series.map((entry, seriesIndex) => (
+              <polygon
+                key={seriesIndex}
+                points={entry.points.map((value, index) => vertex(value, index)).join(' ')}
+                fill={entry.color}
+                opacity={0.4}
+                stroke={entry.color}
+              />
+            ))}
+          </>
+        );
+      }
+      case 'combo': {
+        const series = previewSeries(parsed, 8);
+        const bars = series[0];
+        const line = series[1] ?? series[0];
+        const groups = bars?.points.length ?? 0;
+        const band = plotWidth / Math.max(groups, 1);
+        return (
+          <>
+            {(bars?.points ?? []).map((value, index) => (
+              <rect
+                key={index}
+                x={PAD + index * band + band * 0.2}
+                y={H - PAD - value * plotHeight}
+                width={band * 0.6}
+                height={Math.max(2, value * plotHeight)}
+                fill={PALETTE[0]}
+              />
+            ))}
+            {line && (
+              <path
+                d={linePath(line.points, plotWidth)}
+                fill="none"
+                stroke={PALETTE[1]}
+                strokeWidth={2}
+              />
+            )}
+          </>
+        );
+      }
+      default: {
+        const series = previewSeries(parsed, 8);
+        const groups = series[0]?.points.length ?? 0;
+        const band = plotWidth / Math.max(groups, 1);
+        const barWidth = Math.min(14, (band * 0.7) / Math.max(series.length, 1));
+        return (
+          <>
+            {series.map((entry, seriesIndex) =>
+              entry.points.map((value, index) => (
+                <rect
+                  key={`${seriesIndex}-${index}`}
+                  x={PAD + index * band + seriesIndex * barWidth + band * 0.15}
+                  y={H - PAD - value * plotHeight}
+                  width={barWidth}
+                  height={Math.max(2, value * plotHeight)}
+                  fill={entry.color}
+                />
+              )),
+            )}
+          </>
+        );
+      }
+    }
+  };
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} aria-hidden="true">
+      <line x1={PAD} y1={H - PAD} x2={W - PAD} y2={H - PAD} stroke="var(--border, #ccc)" />
+      {content()}
+    </svg>
+  );
+}
+
+export interface RecommendedChartsDialogProps {
   isOpen: boolean;
   onClose: () => void;
   recommendations: ChartRecommendations | null;
@@ -21,268 +282,64 @@ export function RecommendedChartsDialog({
   onSelectChart,
 }: RecommendedChartsDialogProps): React.JSX.Element | null {
   const { mounted, state } = useCssTransitionMount(isOpen);
-  const [selectedKind, setSelectedKind] = useState<RecommendedKind>('column');
 
   if (!mounted) return null;
 
-  const items = recommendations?.items ?? [
-    { kind: 'column', reason: 'comparison' },
-    { kind: 'line', reason: 'time' },
-    { kind: 'pie', reason: 'proportion' },
-    { kind: 'bar', reason: 'longLabels' },
-    { kind: 'area', reason: 'manyPoints' },
-  ];
-
-  const parsed = recommendations?.parsed ?? {
-    byRow: false,
-    hasHeaderRow: true,
-    hasCategoryColumn: true,
-    categories: ['类别 1', '类别 2', '类别 3', '类别 4', '类别 5'],
-    series: [
-      { name: '系列 1', values: [25, 40, 15, 60, 35], column: 1 },
-      { name: '系列 2', values: [30, 20, 45, 30, 50], column: 2 },
+  const reco: ChartRecommendations = recommendations ?? {
+    parsed: {
+      byRow: false,
+      hasHeaderRow: true,
+      hasCategoryColumn: true,
+      categories: ['1', '2', '3', '4', '5'],
+      series: [
+        { name: '系列 1', values: [15, 28, 45, 22, 38], column: 1 },
+        { name: '系列 2', values: [20, 35, 25, 48, 30], column: 2 },
+      ],
+    },
+    items: [
+      { kind: 'line', reason: 'manyPoints' },
+      { kind: 'column', reason: 'comparison' },
+      { kind: 'bar', reason: 'comparison' },
     ],
   };
 
-  const activeItem = items.find((it) => it.kind === selectedKind) ?? items[0];
-  const activeKind = activeItem?.kind ?? 'column';
-  const activeReason = activeItem?.reason ?? 'comparison';
-  const kindInfo = KIND_NAMES[activeKind] ?? { zh: activeKind, en: activeKind };
-  const reasonInfo = REASON_DESCRIPTIONS[activeReason] ?? {
-    title: '智能推荐',
-    desc: '根据当前选中的数据结构自动推荐该图表类型。',
-  };
-
-  const handleInsert = () => {
-    onSelectChart(activeKind);
-    onClose();
-  };
-
   return (
-    <div className="modal-backdrop" data-state={state} onClick={onClose} style={{ zIndex: 1200 }}>
+    <div
+      className="dialog-backdrop modal-backdrop"
+      data-state={state}
+      onClick={onClose}
+      style={{ zIndex: 1200 }}
+    >
       <div
-        className="modal-window"
+        className="format-cells-dialog recommended-charts-dialog modal-window"
         data-state={state}
-        style={{
-          width: '780px',
-          height: '540px',
-          display: 'flex',
-          flexDirection: 'column',
-          borderRadius: '8px',
-          boxShadow: '0 8px 32px rgba(0,0,0,0.18)',
-          background: '#ffffff',
-          overflow: 'hidden',
-        }}
-        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-label="推荐的图表"
+        onClick={(event) => event.stopPropagation()}
       >
-        {/* Header */}
-        <div
-          className="modal-header"
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            padding: '12px 20px',
-            borderBottom: '1px solid #e1e4e8',
-            background: '#f8f9fa',
-          }}
-        >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span style={{ fontSize: '18px' }}>📊</span>
-            <h3 style={{ margin: 0, fontSize: '15px', fontWeight: 600, color: '#1f2328' }}>
-              插入图表 - 推荐的图表 (Recommended Charts)
-            </h3>
-          </div>
-          <button
-            className="modal-close-btn"
-            onClick={onClose}
-            style={{
-              background: 'none',
-              border: 'none',
-              fontSize: '16px',
-              cursor: 'pointer',
-              color: '#57606a',
-            }}
-          >
-            ✕
-          </button>
-        </div>
-
-        {/* Body (Dual-Panel Layout) */}
-        <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-          {/* Left panel: Recommendations list */}
-          <div
-            style={{
-              width: '310px',
-              borderRight: '1px solid #e1e4e8',
-              background: '#f6f8fa',
-              overflowY: 'auto',
-              padding: '12px',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '10px',
-            }}
-          >
-            <div style={{ fontSize: '12px', color: '#57606a', marginBottom: '4px' }}>
-              根据当前活动选区结构为您匹配了最佳图表类型：
-            </div>
-            {items.map((item) => {
-              const info = KIND_NAMES[item.kind] ?? { zh: item.kind, en: item.kind };
-              const reason = REASON_DESCRIPTIONS[item.reason]?.title ?? '推荐';
-              const isSelected = item.kind === selectedKind;
-
-              return (
-                <div
-                  key={item.kind}
-                  onClick={() => setSelectedKind(item.kind)}
-                  style={{
-                    padding: '10px 12px',
-                    borderRadius: '6px',
-                    cursor: 'pointer',
-                    background: isSelected ? '#ffffff' : 'transparent',
-                    border: isSelected ? '1.5px solid #217346' : '1px solid #d0d7de',
-                    boxShadow: isSelected ? '0 2px 8px rgba(33, 115, 70, 0.12)' : 'none',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '6px',
-                    transition: 'all 0.15s ease',
-                  }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span style={{ fontSize: '13px', fontWeight: 600, color: isSelected ? '#217346' : '#24292f' }}>
-                      {info.zh}
-                    </span>
-                    <span
-                      style={{
-                        fontSize: '10.5px',
-                        background: isSelected ? '#e8f5e9' : '#eef0f2',
-                        color: isSelected ? '#1b5e20' : '#4a5568',
-                        padding: '1px 6px',
-                        borderRadius: '10px',
-                        fontWeight: 500,
-                      }}
-                    >
-                      {reason}
-                    </span>
-                  </div>
-                  <div
-                    style={{
-                      height: '75px',
-                      background: '#fafbfc',
-                      borderRadius: '4px',
-                      border: '1px solid #e1e4e8',
-                      padding: '4px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                    }}
-                  >
-                    <ChartSvgPreview kind={item.kind} parsed={parsed} width={260} height={70} />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Right panel: Large Live Preview & Descriptions */}
-          <div
-            style={{
-              flex: 1,
-              padding: '20px 24px',
-              display: 'flex',
-              flexDirection: 'column',
-              background: '#ffffff',
-              overflowY: 'auto',
-            }}
-          >
-            <div style={{ marginBottom: '16px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <h4 style={{ margin: 0, fontSize: '16px', color: '#217346', fontWeight: 600 }}>
-                  {kindInfo.zh}
-                </h4>
-                <span style={{ fontSize: '12px', color: '#6e7781' }}>({kindInfo.en})</span>
-              </div>
-              <p
-                style={{
-                  margin: '8px 0 0 0',
-                  fontSize: '12.5px',
-                  color: '#424a53',
-                  lineHeight: '1.6',
-                  background: '#f4fbf6',
-                  borderLeft: '3px solid #217346',
-                  padding: '8px 12px',
-                  borderRadius: '0 4px 4px 0',
+        <header>推荐的图表</header>
+        <section className="dialog-body">
+          <p className="dialog-note">根据所选数据的形状推荐，点击即插入。</p>
+          <div className="recommended-charts-grid">
+            {reco.items.map((item) => (
+              <button
+                key={item.kind}
+                type="button"
+                onClick={() => {
+                  onSelectChart(item.kind);
+                  onClose();
                 }}
               >
-                <strong>推荐原因：</strong>
-                {reasonInfo.desc}
-              </p>
-            </div>
-
-            {/* Live Chart Preview Box */}
-            <div
-              style={{
-                flex: 1,
-                border: '1px solid #d0d7de',
-                borderRadius: '6px',
-                background: '#ffffff',
-                padding: '16px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                position: 'relative',
-              }}
-            >
-              <ChartSvgPreview kind={activeKind} parsed={parsed} width={380} height={230} />
-            </div>
-
-            <div style={{ marginTop: '12px', fontSize: '11.5px', color: '#8c959f', textAlign: 'center' }}>
-              基于选区 {parsed.categories.length} 行 × {parsed.series.length} 列数据实时渲染预览
-            </div>
+                <ChartPreview kind={item.kind} parsed={reco.parsed} />
+                <strong>{KIND_LABEL[item.kind] ?? item.kind}</strong>
+                <span>{REASON_LABEL[item.reason] ?? ''}</span>
+              </button>
+            ))}
           </div>
-        </div>
-
-        {/* Footer */}
-        <div
-          className="modal-footer"
-          style={{
-            display: 'flex',
-            justifyContent: 'flex-end',
-            gap: '10px',
-            padding: '12px 20px',
-            borderTop: '1px solid #e1e4e8',
-            background: '#f8f9fa',
-          }}
-        >
-          <button
-            className="pivot-btn"
-            onClick={onClose}
-            style={{
-              padding: '6px 16px',
-              borderRadius: '4px',
-              border: '1px solid #d0d7de',
-              background: '#ffffff',
-              fontSize: '12.5px',
-              cursor: 'pointer',
-            }}
-          >
-            取消
-          </button>
-          <button
-            className="pivot-btn primary"
-            onClick={handleInsert}
-            style={{
-              padding: '6px 20px',
-              borderRadius: '4px',
-              border: 'none',
-              background: '#217346',
-              color: '#ffffff',
-              fontSize: '12.5px',
-              fontWeight: 600,
-              cursor: 'pointer',
-            }}
-          >
-            确定插入
+        </section>
+        <div className="dialog-actions">
+          <button type="button" className="secondary" onClick={onClose}>
+            关闭
           </button>
         </div>
       </div>
