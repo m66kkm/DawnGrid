@@ -1,7 +1,9 @@
 pub mod commands;
+pub mod csv_handler;
 pub mod save_xlsx;
 
 use commands::{close_workbook, get_system_fonts, open_workbook, read_range, save_workbook, AppState};
+use csv_handler::CsvSessions;
 use std::sync::Mutex;
 use xlsx_sidecar::WorkbookSessions;
 
@@ -9,6 +11,7 @@ use xlsx_sidecar::WorkbookSessions;
 pub fn run() {
     let app_state = AppState {
         sessions: Mutex::new(WorkbookSessions::new()),
+        csv_sessions: Mutex::new(CsvSessions::new()),
     };
 
     tauri::Builder::default()

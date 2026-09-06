@@ -167,6 +167,10 @@ fn build_format(style: &SaveCellStyle) -> Format {
 }
 
 pub fn save_workbook_to_path(payload: &SaveWorkbookPayload) -> Result<(), String> {
+    if payload.path.to_lowercase().ends_with(".csv") {
+        return crate::csv_handler::save_csv_to_path(payload);
+    }
+
     let mut workbook = Workbook::new();
 
     if payload.sheets.is_empty() {

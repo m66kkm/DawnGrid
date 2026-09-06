@@ -319,7 +319,7 @@ export default function App() {
       .onDragDropEvent((event) => {
         if (event.payload.type === "drop") {
           const filePath = event.payload.paths[0];
-          if (filePath && /\.(xlsx|xlsm|xlsb)$/i.test(filePath)) {
+          if (filePath && /\.(xlsx|xlsm|xlsb|csv)$/i.test(filePath)) {
             void handleOpenFile(filePath);
           }
         }
@@ -342,7 +342,7 @@ export default function App() {
     };
   }, []);
 
-  // Open XLSX file using native file picker + Rust Sidecar Engine
+  // Open XLSX/CSV file using native file picker + Rust Sidecar Engine
   async function handleOpenFile(filePath?: string) {
     try {
       const selected =
@@ -352,8 +352,20 @@ export default function App() {
               multiple: false,
               filters: [
                 {
-                  name: "Excel 工作簿",
+                  name: "支持的所有表格 (*.xlsx, *.csv, *.xlsm, *.xlsb)",
+                  extensions: ["xlsx", "csv", "xlsm", "xlsb"],
+                },
+                {
+                  name: "Excel 工作簿 (*.xlsx, *.xlsm, *.xlsb)",
                   extensions: ["xlsx", "xlsm", "xlsb"],
+                },
+                {
+                  name: "CSV 文件 (逗号分隔) (*.csv)",
+                  extensions: ["csv"],
+                },
+                {
+                  name: "所有文件 (*.*)",
+                  extensions: ["*"],
                 },
               ],
             });
@@ -451,18 +463,27 @@ export default function App() {
     if (!runtime) return;
 
     try {
+      const isCsvCurrent = currentFileRef.current?.toLowerCase().endsWith(".csv");
       const defaultName =
         currentMetaRef.current?.name ||
-        (currentFileRef.current ? currentFileRef.current.split(/[/\\]/).pop() : "表格导出.xlsx");
+        (currentFileRef.current
+          ? currentFileRef.current.split(/[/\\]/).pop()
+          : isCsvCurrent
+          ? "表格导出.csv"
+          : "表格导出.xlsx");
 
       const path = await save({
         filters: [
           {
-            name: "Excel 工作簿",
+            name: "Excel 工作簿 (*.xlsx)",
             extensions: ["xlsx"],
           },
+          {
+            name: "CSV 文件 (逗号分隔) (*.csv)",
+            extensions: ["csv"],
+          },
         ],
-        defaultPath: defaultName || "表格导出.xlsx",
+        defaultPath: defaultName || (isCsvCurrent ? "表格导出.csv" : "表格导出.xlsx"),
       });
 
       if (path) {
@@ -488,6 +509,59 @@ export default function App() {
     } catch (err) {
       console.error("另存为失败:", err);
       setStatus(`另存为失败: ${String(err)}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleSaveAsCsv() {
+    const runtime = univerRef.current;
+    if (!runtime) return;
+
+    try {
+      const baseName =
+        currentMetaRef.current?.name?.replace(/\.[^.]+$/, "") ||
+        (currentFileRef.current
+          ? currentFileRef.current.split(/[/\\]/).pop()?.replace(/\.[^.]+$/, "")
+          : "表格导出");
+
+      const path = await save({
+        filters: [
+          {
+            name: "CSV 文件 (逗号分隔) (*.csv)",
+            extensions: ["csv"],
+          },
+          {
+            name: "Excel 工作簿 (*.xlsx)",
+            extensions: ["xlsx"],
+          },
+        ],
+        defaultPath: `${baseName || "表格导出"}.csv`,
+      });
+
+      if (path) {
+        setLoading(true);
+        setStatus("正在保存 CSV...");
+        await saveWorkbookToDisk(
+          runtime,
+          path,
+          currentMetaRef.current,
+          loadedSheetIdsRef.current,
+          setStatus,
+        );
+        setCurrentFile(path);
+        currentFileRef.current = path;
+        const fileName = path.split(/[/\\]/).pop() || path;
+        if (currentMetaRef.current) {
+          const updatedMeta = { ...currentMetaRef.current, name: fileName };
+          setMetadata(updatedMeta);
+          currentMetaRef.current = updatedMeta;
+        }
+        setStatus(`已成功保存 CSV 至: ${path}`);
+      }
+    } catch (err) {
+      console.error("保存 CSV 失败:", err);
+      setStatus(`保存 CSV 失败: ${String(err)}`);
     } finally {
       setLoading(false);
     }
@@ -2247,6 +2321,7 @@ export default function App() {
         onNewWorkbook={handleNewWorkbook}
         onSave={handleSave}
         onSaveAs={handleSaveAs}
+        onSaveAsCsv={handleSaveAsCsv}
         onOpenFile={handleOpenFile}
         fileName={currentDisplayName}
         statusMessage={loading ? "正在加载..." : status}

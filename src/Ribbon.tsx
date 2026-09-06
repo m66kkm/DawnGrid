@@ -20,6 +20,7 @@ export interface RibbonProps {
   onNewWorkbook?: () => void;
   onSave?: () => void;
   onSaveAs?: () => void;
+  onSaveAsCsv?: () => void;
   onOpenFile?: () => void;
   fileName?: string;
   statusMessage?: string;
@@ -77,6 +78,7 @@ export function Ribbon({
   onNewWorkbook,
   onSave,
   onSaveAs,
+  onSaveAsCsv,
   onOpenFile,
   fileName = "未命名表格.xlsx",
   statusMessage = "",
@@ -350,8 +352,18 @@ export function Ribbon({
                 }}
               >
                 <span className="file-menu-icon">💾</span>
-                <span className="file-menu-label">另存为...</span>
+                <span className="file-menu-label">另存为 (Excel / CSV)...</span>
                 <span className="file-menu-shortcut">F12</span>
+              </div>
+              <div
+                className="file-menu-item"
+                onClick={() => {
+                  setIsFileMenuOpen(false);
+                  onSaveAsCsv?.();
+                }}
+              >
+                <span className="file-menu-icon">📑</span>
+                <span className="file-menu-label">另存为 CSV 文件...</span>
               </div>
               <div className="file-menu-separator" />
               <div

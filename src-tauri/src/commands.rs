@@ -4,9 +4,11 @@ use tauri::State;
 use xlsx_sidecar::{
     CellRange, RangeResult, WorkbookMetadata, WorkbookSessions,
 };
+use crate::csv_handler::CsvSessions;
 
 pub struct AppState {
     pub sessions: Mutex<WorkbookSessions>,
+    pub csv_sessions: Mutex<CsvSessions>,
 }
 
 #[tauri::command]
@@ -15,8 +17,13 @@ pub fn open_workbook(
     path: String,
     locale: Option<String>,
 ) -> Result<WorkbookMetadata, String> {
-    let mut sessions = state.sessions.lock().map_err(|e| e.to_string())?;
     let path_buf = PathBuf::from(&path);
+    if path.to_lowercase().ends_with(".csv") {
+        let mut csv_sessions = state.csv_sessions.lock().map_err(|e| e.to_string())?;
+        return csv_sessions.open(&path_buf);
+    }
+
+    let mut sessions = state.sessions.lock().map_err(|e| e.to_string())?;
     let loc = locale.as_deref().unwrap_or("zh");
     sessions
         .open_with_locale(&path_buf, loc, None)
@@ -33,13 +40,19 @@ pub fn read_range(
     start_column: usize,
     end_column: usize,
 ) -> Result<RangeResult, String> {
-    let mut sessions = state.sessions.lock().map_err(|e| e.to_string())?;
     let range = CellRange {
         start_row,
         end_row,
         start_column,
         end_column,
     };
+
+    if session_id.starts_with("csv-") {
+        let csv_sessions = state.csv_sessions.lock().map_err(|e| e.to_string())?;
+        return csv_sessions.read_range(&session_id, &range);
+    }
+
+    let mut sessions = state.sessions.lock().map_err(|e| e.to_string())?;
     sessions
         .read_range(&session_id, &sheet_id, &range)
         .map_err(|e| format!("Failed to read range: {}", e))
@@ -47,6 +60,11 @@ pub fn read_range(
 
 #[tauri::command]
 pub fn close_workbook(state: State<AppState>, session_id: String) -> Result<(), String> {
+    if session_id.starts_with("csv-") {
+        let mut csv_sessions = state.csv_sessions.lock().map_err(|e| e.to_string())?;
+        return csv_sessions.close(&session_id);
+    }
+
     let mut sessions = state.sessions.lock().map_err(|e| e.to_string())?;
     sessions
         .close(&session_id)

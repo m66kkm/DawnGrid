@@ -826,6 +826,8 @@ dependencies = [
 name = "dawngrid"
 version = "0.1.0"
 dependencies = [
+ "csv",
+ "encoding_rs",
  "rust_xlsxwriter",
  "serde",
  "serde_json",
@@ -833,6 +835,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-dialog",
  "tauri-plugin-opener",
+ "uuid",
  "winreg 0.56.0",
  "xlsx-sidecar",
 ]
