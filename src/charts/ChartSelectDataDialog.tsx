@@ -13,6 +13,13 @@ interface ChartSelectDataDialogProps {
   onApply: (edit: ChartStateEdit) => void;
 }
 
+interface ChartSelectDataDialogContentProps {
+  chart: ChartVisualState;
+  state: 'open' | 'closed';
+  onClose: () => void;
+  onApply: (edit: ChartStateEdit) => void;
+}
+
 interface SeriesRow {
   name: string;
   valuesRange: string;
@@ -20,16 +27,12 @@ interface SeriesRow {
   source: number | null;
 }
 
-export function ChartSelectDataDialog({
-  isOpen,
-  onClose,
+function ChartSelectDataDialogContent({
   chart,
+  state,
+  onClose,
   onApply,
-}: ChartSelectDataDialogProps): React.JSX.Element | null {
-  const { mounted, state } = useCssTransitionMount(isOpen);
-
-  if (!mounted || !chart) return null;
-
+}: ChartSelectDataDialogContentProps): React.JSX.Element {
   const [rows, setRows] = useState<SeriesRow[]>(
     chart.series.map((series, index) => ({
       name: series.name,
@@ -402,5 +405,25 @@ export function ChartSelectDataDialog({
         </div>
       </div>
     </div>
+  );
+}
+
+export function ChartSelectDataDialog({
+  isOpen,
+  onClose,
+  chart,
+  onApply,
+}: ChartSelectDataDialogProps): React.JSX.Element | null {
+  const { mounted, state } = useCssTransitionMount(isOpen);
+
+  if (!mounted || !chart) return null;
+
+  return (
+    <ChartSelectDataDialogContent
+      chart={chart}
+      state={state}
+      onClose={onClose}
+      onApply={onApply}
+    />
   );
 }

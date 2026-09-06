@@ -13,16 +13,19 @@ interface ChartFormatDialogProps {
   onApply: (edit: ChartStateEdit) => void;
 }
 
-export function ChartFormatDialog({
-  isOpen,
-  onClose,
+interface ChartFormatDialogContentProps {
+  chart: ChartVisualState;
+  state: 'open' | 'closed';
+  onClose: () => void;
+  onApply: (edit: ChartStateEdit) => void;
+}
+
+function ChartFormatDialogContent({
   chart,
+  state,
+  onClose,
   onApply,
-}: ChartFormatDialogProps): React.JSX.Element | null {
-  const { mounted, state } = useCssTransitionMount(isOpen);
-
-  if (!mounted || !chart) return null;
-
+}: ChartFormatDialogContentProps): React.JSX.Element {
   const [title, setTitle] = useState(chart.title);
   const [legend, setLegend] = useState<ChartVisualState['legend']>(chart.legend ?? 'right');
   const [dataLabels, setDataLabels] = useState<ChartVisualState['dataLabels']>(chart.dataLabels ?? 'none');
@@ -408,5 +411,25 @@ export function ChartFormatDialog({
         </div>
       </div>
     </div>
+  );
+}
+
+export function ChartFormatDialog({
+  isOpen,
+  onClose,
+  chart,
+  onApply,
+}: ChartFormatDialogProps): React.JSX.Element | null {
+  const { mounted, state } = useCssTransitionMount(isOpen);
+
+  if (!mounted || !chart) return null;
+
+  return (
+    <ChartFormatDialogContent
+      chart={chart}
+      state={state}
+      onClose={onClose}
+      onApply={onApply}
+    />
   );
 }
