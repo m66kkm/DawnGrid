@@ -4,6 +4,7 @@
 import React, { useState } from 'react';
 import type { ChartStateEdit, ChartVisualState } from './types';
 import { transposeChartSeries } from './chartVisual';
+import { useCssTransitionMount } from './useCssTransitionMount';
 
 interface ChartSelectDataDialogProps {
   isOpen: boolean;
@@ -25,7 +26,9 @@ export function ChartSelectDataDialog({
   chart,
   onApply,
 }: ChartSelectDataDialogProps): React.JSX.Element | null {
-  if (!isOpen || !chart) return null;
+  const { mounted, state } = useCssTransitionMount(isOpen);
+
+  if (!mounted || !chart) return null;
 
   const [rows, setRows] = useState<SeriesRow[]>(
     chart.series.map((series, index) => ({
@@ -108,9 +111,10 @@ export function ChartSelectDataDialog({
   };
 
   return (
-    <div className="modal-backdrop" onClick={onClose} style={{ zIndex: 1200 }}>
+    <div className="modal-backdrop" data-state={state} onClick={onClose} style={{ zIndex: 1200 }}>
       <div
         className="modal-window"
+        data-state={state}
         style={{
           width: '680px',
           maxHeight: '560px',

@@ -1623,14 +1623,18 @@ button.check-item:hover {
 }
 
 /* ========================================================= */
-/* Chart Animations & Visual Transitions (Color & Type Morphs) */
+/* Layer 1: Simple Loop & Decorative Animations (CSS Only)   */
+/* Zero external dependencies. Uses CSS @keyframes & tokens  */
 /* ========================================================= */
-.chart-container-inner {
-  transition: box-shadow 0.3s ease, filter 0.3s ease;
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
 }
 
-.chart-container-inner.palette-pulse {
-  animation: chartPalettePulse 0.55s cubic-bezier(0.16, 1, 0.3, 1);
+.animate-shimmer {
+  background: linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,0.5) 50%, rgba(255,255,255,0) 100%);
+  background-size: 200% 100%;
+  animation: shimmer 2s linear infinite;
 }
 
 @keyframes chartPalettePulse {
@@ -1639,8 +1643,8 @@ button.check-item:hover {
     box-shadow: 0 0 0 rgba(33, 115, 70, 0);
   }
   35% {
-    filter: brightness(1.05);
-    box-shadow: inset 0 0 16px rgba(33, 115, 70, 0.12), 0 0 16px rgba(33, 115, 70, 0.18);
+    filter: brightness(1.06);
+    box-shadow: inset 0 0 16px rgba(33, 115, 70, 0.14), 0 0 16px rgba(33, 115, 70, 0.18);
   }
   100% {
     filter: brightness(1);
@@ -1648,6 +1652,19 @@ button.check-item:hover {
   }
 }
 
+.chart-container-inner {
+  transition: box-shadow 0.3s ease, filter 0.3s ease;
+}
+
+.chart-container-inner.palette-pulse {
+  animation: chartPalettePulse 0.55s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.animate-palette-pulse {
+  animation: chartPalettePulse 0.55s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* SVG Chart Elements Smooth Transitions (Native C++ GPU compositor) */
 .chart-elem-transition {
   transition: fill 0.45s cubic-bezier(0.16, 1, 0.3, 1),
               stroke 0.45s cubic-bezier(0.16, 1, 0.3, 1),
@@ -1676,5 +1693,103 @@ button.check-item:hover {
 
 .chart-legend-color-dot {
   transition: background-color 0.45s cubic-bezier(0.16, 1, 0.3, 1), transform 0.2s ease;
+}
+
+/* ========================================================= */
+/* Layer 2: Enter/Exit & Conditional Mounting Animations     */
+/* Radix / tw-animate-css pattern (pure CSS, zero JS cost)   */
+/* Uses data-[state=open] and data-[state=closed]            */
+/* ========================================================= */
+.modal-backdrop[data-state="open"] {
+  animation: modalBackdropFadeIn 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.modal-backdrop[data-state="closed"] {
+  animation: modalBackdropFadeOut 0.18s cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+
+.modal-window[data-state="open"] {
+  animation: modalWindowEnter 0.24s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.modal-window[data-state="closed"] {
+  animation: modalWindowExit 0.18s cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+
+@keyframes modalBackdropFadeIn {
+  from {
+    opacity: 0;
+    backdrop-filter: blur(0px);
+  }
+  to {
+    opacity: 1;
+    backdrop-filter: blur(1.5px);
+  }
+}
+
+@keyframes modalBackdropFadeOut {
+  from {
+    opacity: 1;
+    backdrop-filter: blur(1.5px);
+  }
+  to {
+    opacity: 0;
+    backdrop-filter: blur(0px);
+  }
+}
+
+@keyframes modalWindowEnter {
+  from {
+    opacity: 0;
+    transform: scale(0.95) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes modalWindowExit {
+  from {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.96) translateY(6px);
+  }
+}
+
+/* Popovers / Dropdowns Pure CSS Enter & Exit */
+.menu-select-drop[data-state="open"],
+.menu-select-drop {
+  animation: popoverFadeIn 0.15s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  transform-origin: top;
+}
+
+.menu-select-drop[data-state="closed"] {
+  animation: popoverFadeOut 0.12s ease-in forwards;
+}
+
+@keyframes popoverFadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes popoverFadeOut {
+  from {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.96) translateY(-4px);
+  }
 }
 

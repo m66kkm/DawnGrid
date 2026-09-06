@@ -4,6 +4,7 @@
 import React, { useState } from 'react';
 import type { ChartStateEdit, ChartVisualState } from './types';
 import { COLOR_PALETTES } from './types';
+import { useCssTransitionMount } from './useCssTransitionMount';
 
 interface ChartFormatDialogProps {
   isOpen: boolean;
@@ -18,7 +19,9 @@ export function ChartFormatDialog({
   chart,
   onApply,
 }: ChartFormatDialogProps): React.JSX.Element | null {
-  if (!isOpen || !chart) return null;
+  const { mounted, state } = useCssTransitionMount(isOpen);
+
+  if (!mounted || !chart) return null;
 
   const [title, setTitle] = useState(chart.title);
   const [legend, setLegend] = useState<ChartVisualState['legend']>(chart.legend ?? 'right');
@@ -86,9 +89,10 @@ export function ChartFormatDialog({
   };
 
   return (
-    <div className="modal-backdrop" onClick={onClose} style={{ zIndex: 1200 }}>
+    <div className="modal-backdrop" data-state={state} onClick={onClose} style={{ zIndex: 1200 }}>
       <div
         className="modal-window"
+        data-state={state}
         style={{
           width: '580px',
           maxHeight: '620px',

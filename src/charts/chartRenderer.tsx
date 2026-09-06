@@ -2,6 +2,7 @@
 // Full-featured SVG Chart renderer with smooth color & type transition animations
 
 import React, { useEffect, useRef, useState } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import type { ChartVisualState } from './types';
 import { COLOR_PALETTES } from './types';
 import { formatCategoryLabel, valueAxisScale } from './chartVisual';
@@ -173,7 +174,17 @@ export function ChartRenderer({ chart, width, height }: ChartRendererProps): Rea
         </div>
       )}
 
-      <svg width={width} height={height} style={{ display: 'block', overflow: 'visible' }}>
+      {/* Chart SVG Scene with Motion Layer 3 Orchestration */}
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={chartTypeAnimKey}
+          initial={{ opacity: 0, scale: 0.985 }}
+          animate={{ opacity: 1, scale: 1 }}
+          exit={{ opacity: 0, scale: 1.015 }}
+          transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+          style={{ width: '100%', height: '100%', position: 'absolute', top: 0, left: 0 }}
+        >
+          <svg width={width} height={height} style={{ display: 'block', overflow: 'visible' }}>
         <style>{`
           /* Smooth color transitions for palette switching */
           .chart-elem-transition {
@@ -890,10 +901,14 @@ export function ChartRenderer({ chart, width, height }: ChartRendererProps): Rea
           </text>
         )}
       </svg>
+        </motion.div>
+      </AnimatePresence>
 
-      {/* Legend */}
+      {/* Legend with Motion layout transition */}
       {showLegend && (
-        <div
+        <motion.div
+          layout
+          transition={{ type: 'spring', stiffness: 400, damping: 30 }}
           className={`chart-legend legend-${legendPos}`}
           style={{
             position: 'absolute',
@@ -911,19 +926,18 @@ export function ChartRenderer({ chart, width, height }: ChartRendererProps): Rea
             fontSize: '11px',
             color: '#444',
             overflow: 'hidden',
-            transition: 'all 0.35s cubic-bezier(0.16, 1, 0.3, 1)',
           }}
         >
           {legendItems.map((item, index) => (
-            <div
+            <motion.div
               key={index}
               className="chart-legend-item"
+              whileHover={{ x: 2 }}
               style={{
                 display: 'flex',
                 alignItems: 'center',
                 gap: '5px',
                 maxWidth: '120px',
-                transition: 'transform 0.2s ease, opacity 0.2s ease',
               }}
             >
               <span
@@ -947,9 +961,9 @@ export function ChartRenderer({ chart, width, height }: ChartRendererProps): Rea
               >
                 {item.name}
               </span>
-            </div>
+            </motion.div>
           ))}
-        </div>
+        </motion.div>
       )}
     </div>
   );

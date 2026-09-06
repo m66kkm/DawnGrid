@@ -5,6 +5,7 @@ import React, { useState } from 'react';
 import type { ChartRecommendations, RecommendedKind } from './types';
 import { ChartSvgPreview } from './chartSvgPreview';
 import { KIND_NAMES, REASON_DESCRIPTIONS } from './chartRecommend';
+import { useCssTransitionMount } from './useCssTransitionMount';
 
 interface RecommendedChartsDialogProps {
   isOpen: boolean;
@@ -19,9 +20,10 @@ export function RecommendedChartsDialog({
   recommendations,
   onSelectChart,
 }: RecommendedChartsDialogProps): React.JSX.Element | null {
+  const { mounted, state } = useCssTransitionMount(isOpen);
   const [selectedKind, setSelectedKind] = useState<RecommendedKind>('column');
 
-  if (!isOpen) return null;
+  if (!mounted) return null;
 
   const items = recommendations?.items ?? [
     { kind: 'column', reason: 'comparison' },
@@ -57,9 +59,10 @@ export function RecommendedChartsDialog({
   };
 
   return (
-    <div className="modal-backdrop" onClick={onClose} style={{ zIndex: 1200 }}>
+    <div className="modal-backdrop" data-state={state} onClick={onClose} style={{ zIndex: 1200 }}>
       <div
         className="modal-window"
+        data-state={state}
         style={{
           width: '780px',
           height: '540px',
