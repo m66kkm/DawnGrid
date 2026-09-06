@@ -356,6 +356,7 @@ mod tests {
                         style: None,
                     },
                 ],
+                charts: vec![],
             }],
         };
 

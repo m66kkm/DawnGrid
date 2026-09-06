@@ -9,6 +9,7 @@ export interface WorkbookMetadata {
   themeColors?: string[];
   date1904: boolean;
   shortDateFormat?: string;
+  visuals?: any[];
 }
 
 export interface SheetMetadata {

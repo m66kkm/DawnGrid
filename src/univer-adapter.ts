@@ -7,6 +7,7 @@ import {
 } from '@univerjs/core'
 import type { UniverRuntime } from './create-univer'
 import type { RangeResult, SheetMetadata, WorkbookMetadata } from './types'
+import { COLOR_PALETTES } from './charts/types'
 
 export async function openWorkbookFile(path: string): Promise<WorkbookMetadata> {
   return await invoke<WorkbookMetadata>('open_workbook', { path })
@@ -295,6 +296,50 @@ export interface SaveCellData {
   style?: SaveCellStyle
 }
 
+export interface SavePointColor {
+  index: number
+  color: string
+}
+
+export interface SaveChartSeries {
+  name?: string
+  valuesRef?: string
+  categoriesRef?: string
+  values?: number[]
+  categories?: string[]
+  color?: string
+  pointColors?: SavePointColor[]
+  explosionPct?: number
+}
+
+export interface SaveChartValueAxis {
+  min?: number | null
+  max?: number | null
+}
+
+export interface SaveChartData {
+  id: string
+  title?: string
+  chartType: string
+  barDirection?: string
+  grouping?: string
+  sheetId: string
+  sheetName?: string
+  x: number
+  y: number
+  width: number
+  height: number
+  legend?: string
+  dataLabels?: string
+  dataLabelPosition?: string
+  dataLabelFormat?: string
+  gridlines?: boolean
+  valueAxis?: SaveChartValueAxis
+  holeSizePct?: number
+  gapWidthPct?: number
+  series: SaveChartSeries[]
+}
+
 export interface SaveSheetData {
   name: string
   showGridLines?: boolean
@@ -303,6 +348,7 @@ export interface SaveSheetData {
   rowHeights: SaveRowHeight[]
   merges: SaveMergeRange[]
   cells: SaveCellData[]
+  charts?: SaveChartData[]
 }
 
 export interface SaveWorkbookPayload {
@@ -316,6 +362,7 @@ export async function saveWorkbookToDisk(
   currentMeta?: WorkbookMetadata | null,
   loadedSheetIds?: Set<string>,
   onStatus?: (text: string) => void,
+  charts?: any[],
 ): Promise<void> {
   // If opening from an existing file, ensure all worksheets have been read into Univer
   if (currentMeta && loadedSheetIds) {
@@ -474,6 +521,99 @@ export async function saveWorkbookToDisk(
       }
     }
 
+    // Charts for this sheet
+    const sheetCharts: SaveChartData[] = []
+    if (Array.isArray(charts)) {
+      for (const c of charts) {
+        if (!c || (c.kind !== 'chart' && !c.chart)) continue
+        const matchesSheet =
+          c.sheetId === sheetId ||
+          c.sheetId === sheetName ||
+          (currentMeta?.sheets?.some(
+            (s) => (s.id === c.sheetId || s.name === c.sheetId) && (s.id === sheetId || s.name === sheetName)
+          )) ||
+          (!c.sheetId && (sheetOrder[0] === sheetId || sheetOrder.length === 1));
+
+        if (matchesSheet) {
+          const primaryType = c.chart?.chartTypes?.[0] || '';
+          let chartType = 'column';
+          if (c.chart?.barDirection === 'bar' || primaryType === 'bar' || (primaryType === 'barChart' && c.chart?.barDirection === 'bar')) {
+            chartType = 'bar';
+          } else if (primaryType === 'pie' || primaryType === 'pieChart') {
+            chartType = 'pie';
+          } else if (primaryType === 'doughnut' || primaryType === 'doughnutChart') {
+            chartType = 'doughnut';
+          } else if (primaryType === 'line' || primaryType === 'lineChart') {
+            chartType = 'line';
+          } else if (primaryType === 'area' || primaryType === 'areaChart') {
+            chartType = 'area';
+          } else if (primaryType === 'scatter' || primaryType === 'scatterChart') {
+            chartType = 'scatter';
+          } else if (primaryType === 'radar' || primaryType === 'radarChart') {
+            chartType = 'radar';
+          } else {
+            chartType = 'column';
+          }
+
+          const isPieOrDoughnut = chartType === 'pie' || chartType === 'doughnut';
+          const paletteColors = COLOR_PALETTES[c.chart?.palette || 'office'] || COLOR_PALETTES.office;
+
+          const series: SaveChartSeries[] = (c.chart?.series || []).map((s: any, sIdx: number) => {
+            let pointColors: SavePointColor[] = [];
+            if (Array.isArray(s.pointColors) && s.pointColors.length > 0) {
+              pointColors = s.pointColors.map((p: any) => ({ index: p.index, color: p.color }));
+            } else if (isPieOrDoughnut && sIdx === 0) {
+              // Automatically assign palette colors to pie slices if not explicitly set
+              const count = Math.max(s.values?.length || 0, s.categories?.length || 0, 1);
+              pointColors = Array.from({ length: count }, (_, i) => ({
+                index: i,
+                color: paletteColors[i % paletteColors.length],
+              }));
+            }
+
+            return {
+              name: s.name,
+              valuesRef: s.valuesRef,
+              categoriesRef: s.categoriesRef,
+              values: Array.isArray(s.values) ? s.values : [],
+              categories: Array.isArray(s.categories) ? s.categories.map(String) : [],
+              color: s.color,
+              pointColors,
+              explosionPct: s.explosionPct,
+            };
+          });
+
+          sheetCharts.push({
+            id: c.id,
+            title: c.chart?.title,
+            chartType,
+            barDirection: c.chart?.barDirection,
+            grouping: c.chart?.grouping,
+            sheetId,
+            sheetName,
+            x: c.pos?.x ?? 80,
+            y: c.pos?.y ?? 40,
+            width: c.pos?.width ?? 520,
+            height: c.pos?.height ?? 340,
+            legend: c.chart?.legend,
+            dataLabels: c.chart?.dataLabels,
+            dataLabelPosition: c.chart?.dataLabelPosition,
+            dataLabelFormat: c.chart?.dataLabelFormat,
+            gridlines: c.chart?.gridlines,
+            valueAxis: c.chart?.valueAxis
+              ? {
+                  min: typeof c.chart.valueAxis.min === 'number' ? c.chart.valueAxis.min : null,
+                  max: typeof c.chart.valueAxis.max === 'number' ? c.chart.valueAxis.max : null,
+                }
+              : undefined,
+            holeSizePct: c.chart?.holeSizePct,
+            gapWidthPct: c.chart?.gapWidthPct,
+            series,
+          });
+        }
+      }
+    }
+
     sheetsPayload.push({
       name: sheetName,
       showGridLines,
@@ -482,6 +622,7 @@ export async function saveWorkbookToDisk(
       rowHeights,
       merges,
       cells,
+      charts: sheetCharts,
     })
   }
 

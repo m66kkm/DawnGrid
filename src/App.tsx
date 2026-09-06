@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { LocaleType, mergeLocales } from "@univerjs/core";
+import "@univerjs/sheets/facade";
 import { UniverSheetsCorePreset } from "@univerjs/preset-sheets-core";
 import UniverPresetSheetsCoreEnUS from "@univerjs/preset-sheets-core/locales/en-US";
 import UniverPresetSheetsCoreZhCN from "@univerjs/preset-sheets-core/locales/zh-CN";
@@ -182,10 +183,125 @@ export default function App() {
   const [calcManual, setCalcManual] = useState(false);
   const [selectedChart, setSelectedChart] = useState(false);
   const [charts, setCharts] = useState<SheetVisual[]>([]);
+  const chartsRef = useRef<SheetVisual[]>(charts);
+  chartsRef.current = charts;
   const [activeChartId, setActiveChartId] = useState<string | null>(null);
+  const [activeSheetId, setActiveSheetId] = useState<string>("sheet-1");
+  const activeSheetIdRef = useRef<string>("sheet-1");
+  const workbookSubRef = useRef<any>(null);
   const [recommendedData, setRecommendedData] = useState<ChartRecommendations | null>(null);
   const [isChartSelectDataOpen, setIsChartSelectDataOpen] = useState(false);
   const [isChartFormatOpen, setIsChartFormatOpen] = useState(false);
+
+  const handleActiveSheetSwitch = useCallback((sheetId: string) => {
+    if (!sheetId) return;
+    if (activeSheetIdRef.current !== sheetId) {
+      setActiveSheetId(sheetId);
+      activeSheetIdRef.current = sheetId;
+    }
+    // Deselect chart if active chart was on a different sheet
+    if (activeChartId) {
+      const cur = chartsRef.current.find((c) => c.id === activeChartId);
+      if (cur && cur.sheetId && cur.sheetId !== sheetId) {
+        setActiveChartId(null);
+        setSelectedChart(false);
+      }
+    }
+    // Lazy-load sheet data if opening an existing file with multiple sheets
+    if (currentMetaRef.current) {
+      const targetSheet = currentMetaRef.current.sheets.find(
+        (s) => s.id === sheetId || s.name === sheetId
+      );
+      if (targetSheet && !loadedSheetIdsRef.current.has(targetSheet.id)) {
+        void loadWorksheetData(
+          univerRef.current!,
+          currentMetaRef.current,
+          targetSheet,
+          loadedSheetIdsRef.current,
+          setStatus,
+        );
+      }
+    }
+  }, [activeChartId]);
+
+  const handleActiveSheetSwitchRef = useRef(handleActiveSheetSwitch);
+  handleActiveSheetSwitchRef.current = handleActiveSheetSwitch;
+
+  const attachWorkbookSheetListener = useCallback((fWb: any) => {
+    try {
+      workbookSubRef.current?.unsubscribe?.();
+      const wb = fWb?.getWorkbook ? fWb.getWorkbook() : fWb;
+      if (wb?.activeSheet$) {
+        workbookSubRef.current = wb.activeSheet$.subscribe((sheet: any) => {
+          if (!sheet) return;
+          const sid = sheet.getSheetId ? sheet.getSheetId() : sheet.id;
+          if (sid) {
+            handleActiveSheetSwitchRef.current(sid);
+          }
+        });
+      }
+    } catch (e) {
+      console.warn("attachWorkbookSheetListener error:", e);
+    }
+  }, []);
+
+  const currentSheetName = useMemo(() => {
+    if (!metadata) {
+      try {
+        const fWb = univerRef.current?.univerAPI.getActiveWorkbook();
+        return fWb?.getActiveSheet()?.getSheetName?.() ?? null;
+      } catch {
+        return null;
+      }
+    }
+    const s = metadata.sheets.find((sh) => sh.id === activeSheetId || sh.name === activeSheetId);
+    if (s) return s.name;
+    try {
+      const fWb = univerRef.current?.univerAPI.getActiveWorkbook();
+      return fWb?.getActiveSheet()?.getSheetName?.() ?? null;
+    } catch {
+      return null;
+    }
+  }, [metadata, activeSheetId]);
+
+  const visibleCharts = useMemo(() => {
+    return charts.filter((c) => {
+      const chartSheetId = c.sheetId;
+      if (!chartSheetId) {
+        const defaultSheetId = metadata?.sheets[0]?.id || "sheet-1";
+        return activeSheetId === defaultSheetId;
+      }
+      if (chartSheetId === activeSheetId) return true;
+      if (currentSheetName && chartSheetId === currentSheetName) return true;
+      if (metadata) {
+        const chartSheet = metadata.sheets.find(
+          (s) => s.id === chartSheetId || s.name === chartSheetId
+        );
+        if (chartSheet && (chartSheet.id === activeSheetId || chartSheet.name === currentSheetName)) {
+          return true;
+        }
+      }
+      try {
+        const fWb = univerRef.current?.univerAPI.getActiveWorkbook();
+        const ws = fWb?.getActiveSheet();
+        const wsId = ws?.getSheetId?.();
+        const wsName = ws?.getSheetName?.();
+        if (wsId && chartSheetId === wsId) return true;
+        if (wsName && chartSheetId === wsName) return true;
+      } catch {}
+      return false;
+    });
+  }, [charts, activeSheetId, currentSheetName, metadata]);
+
+  useEffect(() => {
+    if (activeChartId) {
+      const cur = chartsRef.current.find((c) => c.id === activeChartId);
+      if (cur && cur.sheetId && cur.sheetId !== activeSheetId && cur.sheetId !== currentSheetName) {
+        setActiveChartId(null);
+        setSelectedChart(false);
+      }
+    }
+  }, [activeSheetId, currentSheetName, activeChartId]);
 
   // Safe range resolver (ensures non-null even if canvas focus was momentarily lost)
   function getTargetRange() {
@@ -293,18 +409,23 @@ export default function App() {
 
   function insertChartObject(chartKind: RecommendedKind, customTitle?: string): SheetVisual {
     const data = extractActiveChartValues();
+    const curWb = univerRef.current?.univerAPI.getActiveWorkbook();
+    const curWs = curWb?.getActiveSheet();
+    const currentActiveId = curWs?.getSheetId?.() || activeSheetIdRef.current || data.sheetId || 'sheet-1';
+    const currentActiveName = curWs?.getSheetName?.() || data.sheetName || 'Sheet1';
+    const effectiveSheetId = currentActiveId;
     try {
       const newChart = buildChartVisual({
         id: `chart-${Date.now()}`,
-        sheetId: data.sheetId,
-        sheetName: data.sheetName,
+        sheetId: effectiveSheetId,
+        sheetName: currentActiveName,
         chartType: chartKind,
         dataRange: data.rangeA1,
         title: customTitle,
         values: data.values,
         initialPos: {
-          x: 100 + (charts.length % 5) * 25,
-          y: 60 + (charts.length % 5) * 25,
+          x: 100 + (visibleCharts.length % 5) * 25,
+          y: 60 + (visibleCharts.length % 5) * 25,
           width: 520,
           height: 340,
         },
@@ -325,15 +446,15 @@ export default function App() {
       ];
       const newChart = buildChartVisual({
         id: `chart-${Date.now()}`,
-        sheetId: data.sheetId,
-        sheetName: data.sheetName,
+        sheetId: effectiveSheetId,
+        sheetName: currentActiveName,
         chartType: chartKind,
         dataRange: 'A1:C5',
         title: customTitle || '季度销售业绩与利润',
         values: fallbackData,
         initialPos: {
-          x: 100 + (charts.length % 5) * 25,
-          y: 60 + (charts.length % 5) * 25,
+          x: 100 + (visibleCharts.length % 5) * 25,
+          y: 60 + (visibleCharts.length % 5) * 25,
           width: 520,
           height: 340,
         },
@@ -348,11 +469,11 @@ export default function App() {
 
   function getTargetChart(autoCreateKind?: RecommendedKind): SheetVisual | null {
     if (activeChartId) {
-      const found = charts.find((c) => c.id === activeChartId);
+      const found = visibleCharts.find((c) => c.id === activeChartId);
       if (found) return found;
     }
-    if (charts.length > 0) {
-      const fallback = charts[charts.length - 1];
+    if (visibleCharts.length > 0) {
+      const fallback = visibleCharts[visibleCharts.length - 1];
       setActiveChartId(fallback.id);
       setSelectedChart(true);
       return fallback;
@@ -367,6 +488,10 @@ export default function App() {
     const ctx = getTargetRange();
     if (!ctx) return;
     try {
+      const curSheetId = ctx.worksheet?.getSheetId?.();
+      if (curSheetId) {
+        handleActiveSheetSwitchRef.current(curSheetId);
+      }
       const style = ctx.range.getCellStyleData() || {};
       let numFmt = "常规";
       try {
@@ -448,6 +573,14 @@ export default function App() {
 
     univerRef.current = runtime;
 
+    // Attach activeSheet$ listener to default blank workbook
+    attachWorkbookSheetListener(runtime.univerAPI.getActiveWorkbook());
+
+    // Listen to new workbooks created
+    const subWbCreated = (runtime.univerAPI as any).onUniverSheetCreated?.((newWb: any) => {
+      attachWorkbookSheetListener(newWb);
+    });
+
     // Listen to selection changes and commands to keep ribbon format updated
     const subSelection = (runtime.univerAPI as any).addEvent?.(
       (runtime.univerAPI as any).Event?.SelectionChanged,
@@ -460,38 +593,56 @@ export default function App() {
       (runtime.univerAPI as any).Event?.ActiveSheetChanged,
       (params: any) => {
         const sheetId = params?.activeSheet?.getSheetId?.() || params?.subUnitId;
-        if (!sheetId || !currentMetaRef.current) return;
-        const targetSheet = currentMetaRef.current.sheets.find((s) => s.id === sheetId);
-        if (targetSheet && !loadedSheetIdsRef.current.has(targetSheet.id)) {
-          void loadWorksheetData(
-            runtime,
-            currentMetaRef.current,
-            targetSheet,
-            loadedSheetIdsRef.current,
-            setStatus,
-          );
+        if (sheetId) {
+          handleActiveSheetSwitchRef.current(sheetId);
         }
       }
     );
 
     const subCommand = (runtime.univerAPI as any).onCommandExecuted?.((command: any) => {
       syncSelectionState();
-      if (command?.id === "sheet.operation.set-worksheet-active") {
-        const sheetId = command?.params?.subUnitId;
-        if (sheetId && currentMetaRef.current) {
-          const targetSheet = currentMetaRef.current.sheets.find((s) => s.id === sheetId);
-          if (targetSheet && !loadedSheetIdsRef.current.has(targetSheet.id)) {
-            void loadWorksheetData(
-              runtime,
-              currentMetaRef.current,
-              targetSheet,
-              loadedSheetIdsRef.current,
-              setStatus,
-            );
-          }
+      const isSheetSwitch =
+        command?.id === "sheet.operation.set-worksheet-active" ||
+        command?.id === "sheet.command.set-worksheet-activate" ||
+        command?.id === "sheet.command.insert-sheet" ||
+        command?.id === "sheet.mutation.insert-sheet" ||
+        command?.id === "sheet.operation.set-selections" ||
+        command?.id === "sheet.mutation.remove-sheet" ||
+        command?.id === "sheet.command.remove-sheet" ||
+        command?.id === "sheet.mutation.set-worksheet-order";
+
+      if (isSheetSwitch) {
+        const sheetId =
+          command?.params?.subUnitId ||
+          command?.params?.sheetId ||
+          command?.params?.sheet?.id;
+        if (sheetId) {
+          handleActiveSheetSwitchRef.current(sheetId);
         }
+        setTimeout(() => {
+          try {
+            const curWb = runtime.univerAPI.getActiveWorkbook();
+            const curWs = curWb?.getActiveSheet();
+            const actualId = curWs?.getSheetId?.();
+            if (actualId) {
+              handleActiveSheetSwitchRef.current(actualId);
+            }
+          } catch {}
+        }, 20);
       }
     });
+
+    // Safety net interval to guarantee activeSheetId stays 100% synchronized
+    const syncInterval = setInterval(() => {
+      try {
+        const curWb = runtime.univerAPI.getActiveWorkbook();
+        const curWs = curWb?.getActiveSheet();
+        const curId = curWs?.getSheetId?.();
+        if (curId && curId !== activeSheetIdRef.current) {
+          handleActiveSheetSwitchRef.current(curId);
+        }
+      } catch {}
+    }, 250);
 
     // Listen to native file drag-drop
     let unlistenDrop: (() => void) | undefined;
@@ -515,9 +666,12 @@ export default function App() {
     }, 200);
 
     return () => {
+      subWbCreated?.dispose?.();
       subSelection?.dispose?.();
       subSheet?.dispose?.();
       subCommand?.dispose?.();
+      workbookSubRef.current?.unsubscribe?.();
+      clearInterval(syncInterval);
       unlistenDrop?.();
     };
   }, []);
@@ -565,12 +719,45 @@ export default function App() {
       currentMetaRef.current = meta;
       loadedSheetIdsRef.current.clear();
 
+      // Parse visuals (charts) from workbook
+      const loadedCharts: SheetVisual[] = ((meta as any).visuals || [])
+        .filter((v: any) => v.kind === 'chart' && v.chart)
+        .map((v: any, index: number) => {
+          const fromCol = v.anchor?.fromColumn ?? 0;
+          const fromRow = v.anchor?.fromRow ?? 0;
+          const toCol = v.anchor?.toColumn ?? (fromCol + 8);
+          const toRow = v.anchor?.toRow ?? (fromRow + 15);
+          const colW = 72;
+          const rowH = 20;
+          const x = Math.max(20, fromCol * colW + Math.round((v.anchor?.fromColumnOffset ?? 0) / 9525));
+          const y = Math.max(20, fromRow * rowH + Math.round((v.anchor?.fromRowOffset ?? 0) / 9525));
+          const width = Math.max(360, (toCol - fromCol) * colW);
+          const height = Math.max(240, (toRow - fromRow) * rowH);
+
+          return {
+            id: v.id || `chart-${index}-${Date.now()}`,
+            sheetId: v.sheetId,
+            kind: 'chart' as const,
+            anchor: v.anchor,
+            pos: { x, y, width, height },
+            chart: v.chart,
+          };
+        });
+      setCharts(loadedCharts);
+      setActiveChartId(null);
+      setSelectedChart(false);
+
       // 2. Load Workbook skeleton
       loadWorkbookSkeleton(runtime, meta);
+
+      // Attach sheet listener to newly loaded workbook
+      attachWorkbookSheetListener(runtime.univerAPI.getActiveWorkbook());
 
       // 3. Load full data for active sheet
       const activeSheet = meta.sheets[meta.activeTab] || meta.sheets[0];
       if (activeSheet) {
+        setActiveSheetId(activeSheet.id);
+        activeSheetIdRef.current = activeSheet.id;
         await loadWorksheetData(
           runtime,
           meta,
@@ -628,6 +815,7 @@ export default function App() {
         currentMetaRef.current,
         loadedSheetIdsRef.current,
         setStatus,
+        chartsRef.current,
       );
       setStatus(`表格已成功保存至: ${fileToSave}`);
     } catch (err) {
@@ -675,6 +863,7 @@ export default function App() {
           currentMetaRef.current,
           loadedSheetIdsRef.current,
           setStatus,
+          chartsRef.current,
         );
         setCurrentFile(path);
         currentFileRef.current = path;
@@ -728,6 +917,7 @@ export default function App() {
           currentMetaRef.current,
           loadedSheetIdsRef.current,
           setStatus,
+          chartsRef.current,
         );
         setCurrentFile(path);
         currentFileRef.current = path;
@@ -780,6 +970,12 @@ export default function App() {
     setMetadata(null);
     currentMetaRef.current = null;
     loadedSheetIdsRef.current.clear();
+    setCharts([]);
+    setActiveChartId(null);
+    setSelectedChart(false);
+    setActiveSheetId("sheet-1");
+    activeSheetIdRef.current = "sheet-1";
+    attachWorkbookSheetListener(runtime.univerAPI.getActiveWorkbook());
     setStatus("已新建空白表格");
   }
 
@@ -2803,14 +2999,14 @@ export default function App() {
         pageBreakPreview={pageBreakPreview}
         calcManual={calcManual}
         selectedChart={selectedChart}
-        hasCharts={charts.length > 0}
+        hasCharts={visibleCharts.length > 0}
         definedNames={definedNames.map((n) => n.name)}
       />
 
       <main className="univer-grid-wrapper" style={{ position: "relative" }}>
         <div id="univer-container" />
         <ChartOverlay
-          charts={charts}
+          charts={visibleCharts}
           activeChartId={activeChartId}
           onSelectChart={(id) => {
             setActiveChartId(id);
@@ -2973,9 +3169,9 @@ export default function App() {
       <ChartSelectDataDialog
         isOpen={isChartSelectDataOpen}
         onClose={() => setIsChartSelectDataOpen(false)}
-        chart={charts.find((c) => c.id === activeChartId)?.chart ?? charts[charts.length - 1]?.chart ?? null}
+        chart={visibleCharts.find((c) => c.id === activeChartId)?.chart ?? visibleCharts[visibleCharts.length - 1]?.chart ?? null}
         onApply={(edit) => {
-          const targetId = activeChartId || charts[charts.length - 1]?.id;
+          const targetId = activeChartId || visibleCharts[visibleCharts.length - 1]?.id;
           if (targetId) {
             setCharts((prev) =>
               prev.map((c) =>
@@ -2991,9 +3187,9 @@ export default function App() {
       <ChartFormatDialog
         isOpen={isChartFormatOpen}
         onClose={() => setIsChartFormatOpen(false)}
-        chart={charts.find((c) => c.id === activeChartId)?.chart ?? charts[charts.length - 1]?.chart ?? null}
+        chart={visibleCharts.find((c) => c.id === activeChartId)?.chart ?? visibleCharts[visibleCharts.length - 1]?.chart ?? null}
         onApply={(edit) => {
-          const targetId = activeChartId || charts[charts.length - 1]?.id;
+          const targetId = activeChartId || visibleCharts[visibleCharts.length - 1]?.id;
           if (targetId) {
             setCharts((prev) =>
               prev.map((c) =>
