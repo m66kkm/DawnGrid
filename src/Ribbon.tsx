@@ -1601,7 +1601,7 @@ export function Ribbon({
                 <button
                   className="ribbon-tool as-button large"
                   title="最近使用的函数：常用函数"
-                  onClick={() => onCommand("insert-function-open:All")}
+                  onClick={() => onCommand("insert-function-open:Common")}
                 >
                   <span className="tool-icon-row">
                     <ToolSymbol symbol="🕘" />

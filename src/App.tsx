@@ -92,6 +92,7 @@ export default function App() {
   // Modal dialog states
   const [isFormatCellsOpen, setIsFormatCellsOpen] = useState(false);
   const [isInsertFuncOpen, setIsInsertFuncOpen] = useState(false);
+  const [insertFuncCategory, setInsertFuncCategory] = useState<string>("Common");
   const [isAiOpen, setIsAiOpen] = useState(false);
   const [isGoToOpen, setIsGoToOpen] = useState(false);
 
@@ -686,11 +687,19 @@ export default function App() {
   }
 
   // Handle formula insertion from InsertFunctionDialog or AI
-  function handleInsertFormula(formula: string) {
+  function handleInsertFormula(formula: string): string | null {
     const ctx = getTargetRange();
-    if (!ctx) return;
-    ctx.range.setFormula(formula);
-    setStatus(`已插入函数: ${formula}`);
+    if (!ctx) return "未找到活动单元格";
+    try {
+      const cleanFormula = formula.trim().startsWith("=") ? formula.trim() : `=${formula.trim()}`;
+      ctx.range.setFormula(cleanFormula);
+      setStatus(`已插入函数: ${cleanFormula}`);
+      syncSelectionState();
+      return null;
+    } catch (e: any) {
+      console.error("插入公式错误:", e);
+      return e?.message || "公式格式无效，请检查参数";
+    }
   }
 
   // ── Data Tab Dialog Handlers ──
@@ -850,6 +859,13 @@ export default function App() {
 
   // Handle commands dispatched from Ribbon
   async function handleRibbonCommand(cmd: string, ...args: any[]) {
+    if (cmd === "insert-function-open" || cmd.startsWith("insert-function-open:")) {
+      const cat = cmd.includes(":") ? cmd.split(":")[1] : (args[0] || "Common");
+      setInsertFuncCategory(cat);
+      setIsInsertFuncOpen(true);
+      return;
+    }
+
     const ctx = getTargetRange();
     if (!ctx) return;
     const { runtime, workbook, worksheet, range } = ctx;
@@ -2255,6 +2271,17 @@ export default function App() {
         void handleSaveAsRef.current();
         return;
       }
+      if (e.shiftKey && e.key === "F3") {
+        e.preventDefault();
+        setInsertFuncCategory("Common");
+        setIsInsertFuncOpen(true);
+        return;
+      }
+      if (e.ctrlKey && e.key === "F3") {
+        e.preventDefault();
+        setIsNameManagerOpen(true);
+        return;
+      }
 
       if (e.ctrlKey || e.metaKey) {
         if (e.key === "1") {
@@ -2352,10 +2379,13 @@ export default function App() {
         onApply={handleApplyFormatCells}
       />
 
-      {/* Insert Function Dialog (fx) */}
+      {/* Insert Function Dialog (fx / Shift+F3) */}
       <InsertFunctionDialog
         isOpen={isInsertFuncOpen}
+        targetLabel={lastActiveCellAddress || "A1"}
+        initialCategory={insertFuncCategory}
         onClose={() => setIsInsertFuncOpen(false)}
+        onApply={handleInsertFormula}
         onInsert={handleInsertFormula}
       />
 
