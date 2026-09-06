@@ -197,7 +197,11 @@ export async function populateSheetRange(
   // Apply row heights if any
   for (const rowProp of result.rows) {
     if (rowProp.height) {
-      worksheet.setRowHeights(rowProp.row, 1, Math.round((rowProp.height * 96) / 72))
+      try {
+        worksheet.setRowHeights(rowProp.row, 1, Math.round((rowProp.height * 96) / 72))
+      } catch {
+        // ignore row height errors
+      }
     }
   }
 
@@ -226,9 +230,10 @@ export async function loadWorksheetData(
   onStatus?: (text: string) => void,
 ): Promise<void> {
   if (loadedSheetIds.has(sheet.id)) return
-  loadedSheetIds.add(sheet.id)
-
-  if (sheet.rowCount === 0 || sheet.columnCount === 0) return
+  if (sheet.rowCount === 0 || sheet.columnCount === 0) {
+    loadedSheetIds.add(sheet.id)
+    return
+  }
 
   onStatus?.(`正在加载工作表: ${sheet.name}...`)
 
@@ -249,6 +254,8 @@ export async function loadWorksheetData(
       meta.styles,
     )
   }
+
+  loadedSheetIds.add(sheet.id)
 }
 
 export interface SaveCellStyle {
@@ -364,19 +371,49 @@ export async function saveWorkbookToDisk(
   onStatus?: (text: string) => void,
   charts?: any[],
 ): Promise<void> {
-  // If opening from an existing file, ensure all worksheets have been read into Univer
-  if (currentMeta && loadedSheetIds) {
-    for (const sheet of currentMeta.sheets) {
-      if (!loadedSheetIds.has(sheet.id)) {
-        onStatus?.(`正在加载工作表: ${sheet.name} 数据以供保存...`)
-        await loadWorksheetData(runtime, currentMeta, sheet, loadedSheetIds, onStatus)
-      }
-    }
-  }
-
   const activeWorkbook = runtime.univerAPI.getActiveWorkbook()
   if (!activeWorkbook) {
     throw new Error('未找到当前活动工作簿')
+  }
+
+  // Authoritative live worksheets from Univer
+  const liveWorksheets = (activeWorkbook.getSheets?.() || []).filter(Boolean)
+  const liveSheetIds = new Set<string>(liveWorksheets.map((ws: any) => ws.getSheetId()))
+
+  const getSnapshotCellCount = (sData: any): number => {
+    if (!sData?.cellData) return 0
+    let matrix = sData.cellData
+    if (matrix && typeof matrix.getMatrix === 'function') matrix = matrix.getMatrix()
+    else if (matrix && typeof matrix.getData === 'function') matrix = matrix.getData()
+    if (!matrix) return 0
+    let count = 0
+    for (const r in matrix) {
+      const row = matrix[r]
+      if (!row) continue
+      for (const c in row) {
+        const cell = row[c]
+        if (cell && (cell.v !== undefined && cell.v !== null || cell.f || cell.s)) {
+          count++
+        }
+      }
+    }
+    return count
+  }
+
+  // If opening from an existing file, ensure all LIVE worksheets have their cells populated
+  if (currentMeta) {
+    const tempSnapshot = activeWorkbook.getSnapshot() as any
+    for (const sheet of currentMeta.sheets) {
+      if (liveSheetIds.has(sheet.id) && sheet.rowCount > 0) {
+        const sData = tempSnapshot?.sheets?.[sheet.id]
+        const count = getSnapshotCellCount(sData)
+        if (count === 0 || !loadedSheetIds?.has(sheet.id)) {
+          onStatus?.(`正在加载工作表: ${sheet.name} 数据以供保存...`)
+          loadedSheetIds?.delete(sheet.id)
+          await loadWorksheetData(runtime, currentMeta, sheet, loadedSheetIds || new Set(), onStatus)
+        }
+      }
+    }
   }
 
   const snapshot = activeWorkbook.getSnapshot() as any
@@ -385,10 +422,27 @@ export async function saveWorkbookToDisk(
   }
 
   const stylesPool = snapshot.styles || {}
-  const sheetOrder: string[] =
+  const rawSheetOrder: string[] =
     snapshot.sheetOrder && snapshot.sheetOrder.length > 0
       ? snapshot.sheetOrder
       : Object.keys(snapshot.sheets)
+
+  // Strictly filter sheetOrder to only sheets that are in liveSheetIds and exist in snapshot.sheets
+  const sheetOrder: string[] = rawSheetOrder.filter(
+    (sheetId) => liveSheetIds.has(sheetId) && Boolean(snapshot.sheets[sheetId])
+  )
+
+  // In case liveWorksheets has a newly added sheet not yet present in rawSheetOrder
+  for (const ws of liveWorksheets) {
+    const sid = ws.getSheetId()
+    if (snapshot.sheets[sid] && !sheetOrder.includes(sid)) {
+      sheetOrder.push(sid)
+    }
+  }
+
+  if (sheetOrder.length === 0) {
+    throw new Error('当前工作簿中没有有效的工作表，无法保存')
+  }
 
   const sheetsPayload: SaveSheetData[] = []
 
@@ -417,6 +471,18 @@ export async function saveWorkbookToDisk(
             col: c,
             width: Math.max(1, +(colObj.w / 8).toFixed(1)),
           })
+        }
+      }
+    }
+    if (colWidths.length === 0 && currentMeta) {
+      const metaSheet = currentMeta.sheets.find((s) => s.id === sheetId || s.name === sheetName)
+      if (metaSheet?.columnWidths) {
+        for (const col of metaSheet.columnWidths) {
+          if (col.width) {
+            for (let c = col.startColumn; c <= col.endColumn; c++) {
+              colWidths.push({ col: c, width: Math.max(1, +(col.width).toFixed(1)) })
+            }
+          }
         }
       }
     }
@@ -517,6 +583,63 @@ export async function saveWorkbookToDisk(
               style,
             })
           }
+        }
+      }
+    }
+
+    // Fail-safe: If cells is empty but currentMeta has this sheet with rowCount > 0,
+    // read directly from xlsx-engine session so we never lose cell data on save
+    if (cells.length === 0 && currentMeta) {
+      const metaSheet = currentMeta.sheets.find(
+        (s) => s.id === sheetId || s.name === sheetName
+      )
+      if (metaSheet && metaSheet.rowCount > 0 && metaSheet.columnCount > 0) {
+        try {
+          const totalRows = metaSheet.rowCount
+          const maxCol = metaSheet.columnCount - 1
+          const batchRows = Math.max(10, Math.min(2000, Math.floor(50000 / Math.max(1, metaSheet.columnCount))))
+          for (let r = 0; r < totalRows; r += batchRows) {
+            const batchEnd = Math.min(r + batchRows - 1, totalRows - 1)
+            const result = await readWorkbookRange(
+              currentMeta.sessionId,
+              metaSheet.id,
+              r,
+              batchEnd,
+              0,
+              maxCol,
+            )
+            for (const cell of result.cells) {
+              if ((cell.value !== undefined && cell.value !== null) || cell.formula) {
+                const styleObj = cell.styleIndex !== undefined ? currentMeta.styles[cell.styleIndex] : undefined
+                let style: SaveCellStyle | undefined
+                if (styleObj) {
+                  style = {}
+                  if (styleObj.bold) style.bold = true
+                  if (styleObj.italic) style.italic = true
+                  if (styleObj.underline) style.underline = true
+                  if (styleObj.strikethrough) style.strike = true
+                  if (styleObj.fontSize) style.fontSize = styleObj.fontSize
+                  if (styleObj.fontFamily) style.fontFamily = styleObj.fontFamily
+                  if (styleObj.fontColor) style.fontColor = styleObj.fontColor
+                  if (styleObj.fillColor) style.bgColor = styleObj.fillColor
+                  if (styleObj.numberFormat) style.numFormat = styleObj.numberFormat
+                  if (styleObj.wrapText) style.wrapText = true
+                  if (styleObj.horizontalAlignment) style.alignH = styleObj.horizontalAlignment
+                  if (styleObj.verticalAlignment) style.alignV = styleObj.verticalAlignment
+                  if (Object.keys(style).length === 0) style = undefined
+                }
+                cells.push({
+                  r: cell.row,
+                  c: cell.column,
+                  v: cell.value !== undefined && cell.value !== null ? cell.value : null,
+                  f: cell.formula,
+                  style,
+                })
+              }
+            }
+          }
+        } catch (err) {
+          console.warn(`Direct read fallback for sheet ${sheetName} failed:`, err)
         }
       }
     }
@@ -632,6 +755,11 @@ export async function saveWorkbookToDisk(
       sheets: sheetsPayload,
     },
   })
+
+  // Synchronize currentMeta sheets to only live sheets
+  if (currentMeta) {
+    currentMeta.sheets = currentMeta.sheets.filter((s) => liveSheetIds.has(s.id))
+  }
 }
 
 

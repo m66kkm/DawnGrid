@@ -1,14 +1,20 @@
 {
   "name": "dawngrid",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "license": "AGPL-3.0-only",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "tauri dev",
+    "dev:web": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "build:debug": "tauri build --debug",
+    "build:release": "tauri build",
+    "deploy": "tauri build && bun -e \"const fs=require('fs');const p=require('path');if(!fs.existsSync('target'))fs.mkdirSync('target');const src=p.join('src-tauri','target','release','bundle','nsis');if(fs.existsSync(src)){fs.readdirSync(src).filter(f=>f.endsWith('.exe')).forEach(f=>fs.copyFileSync(p.join(src,f),p.join('target',f)));console.log('\\x1b[32m✅ 打包文件已提取到 target 目录下！\\x1b[0m');}\""
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

@@ -87,9 +87,13 @@ export function ChartOverlay({
     };
   }, [dragState, onUpdateChartPos]);
 
-  // Keyboard delete shortcut
+  // Keyboard shortcuts (Escape to deselect, Delete/Backspace to delete)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && activeChartId) {
+        onSelectChart(null);
+        return;
+      }
       if ((e.key === 'Delete' || e.key === 'Backspace') && activeChartId) {
         const target = e.target as HTMLElement;
         if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
@@ -100,7 +104,7 @@ export function ChartOverlay({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [activeChartId, onDeleteChart]);
+  }, [activeChartId, onDeleteChart, onSelectChart]);
 
   return (
     <div
@@ -140,6 +144,10 @@ export function ChartOverlay({
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.92, transition: { duration: 0.18 } }}
               whileHover={!dragState ? { y: -1 } : undefined}
+              onMouseDown={(e) => {
+                e.stopPropagation();
+                onSelectChart(chartItem.id);
+              }}
               onClick={(e) => {
                 e.stopPropagation();
                 onSelectChart(chartItem.id);
@@ -212,6 +220,8 @@ export function ChartOverlay({
                     animate={{ opacity: 1, y: 0, scale: 1 }}
                     exit={{ opacity: 0, y: 6, scale: 0.95 }}
                     transition={{ type: 'spring', stiffness: 500, damping: 30 }}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onClick={(e) => e.stopPropagation()}
                     style={{
                       position: 'absolute',
                       top: '-36px',

@@ -126,6 +126,19 @@ export function ChartRenderer({ chart, width, height }: ChartRendererProps): Rea
   const hasCatAxisTitle = Boolean(chart.axisTitles?.category && !isPie && !isRadar);
   const hasValAxisTitle = Boolean(chart.axisTitles?.value && !isPie && !isRadar);
 
+  // Build legend items (Pie shows categories, other charts show series)
+  const legendItems = isPie
+    ? categories.map((cat, i) => {
+        const sliceColor =
+          primarySeries?.pointColors?.find((p) => p.index === i)?.color ??
+          defaultColors[i % defaultColors.length];
+        return { name: cat || `类别 ${i + 1}`, color: sliceColor };
+      })
+    : chart.series.map((series, sIndex) => ({
+        name: series.name || `系列 ${sIndex + 1}`,
+        color: series.color ?? defaultColors[sIndex % defaultColors.length],
+      }));
+
   // Layout metrics
   const titleHeight = chart.title ? 32 : 10;
   const legendPos = chart.legend ?? (seriesCount > 1 || isPie ? 'right' : 'none');
@@ -135,16 +148,42 @@ export function ChartRenderer({ chart, width, height }: ChartRendererProps): Rea
   let legendHeight = 0;
   if (showLegend) {
     if (legendPos === 'right' || legendPos === 'left') {
-      legendWidth = Math.min(130, Math.max(80, width * 0.22));
+      const maxCharCount = legendItems.reduce((acc, it) => {
+        const text = it.name || '';
+        let w = 0;
+        for (let i = 0; i < text.length; i++) {
+          w += text.charCodeAt(i) > 127 ? 12 : 7.2;
+        }
+        return Math.max(acc, w);
+      }, 30);
+      // Estimate width from character lengths (clamped between 80px and 35% of chart width, max 190px)
+      const desiredWidth = maxCharCount + 28;
+      const maxAllowed = Math.max(80, Math.min(190, width * 0.35));
+      legendWidth = Math.max(80, Math.min(desiredWidth, maxAllowed));
     } else {
       legendHeight = 28;
     }
   }
 
-  const paddingLeft = isPie || isRadar ? 20 : (legendPos === 'left' ? legendWidth + 45 : 55) + (hasValAxisTitle ? 20 : 0);
-  const paddingRight = isPie || isRadar ? 20 : (legendPos === 'right' ? legendWidth + 20 : 25);
-  const paddingTop = titleHeight + (legendPos === 'top' ? legendHeight + 8 : 8);
-  const paddingBottom = isPie || isRadar ? 20 : (legendPos === 'bottom' ? legendHeight + 35 : 35) + (hasCatAxisTitle ? 20 : 0);
+  // Padding ensures chart graphic and legend/description text never collide or overlap
+  const paddingLeft =
+    legendPos === 'left'
+      ? legendWidth + (isPie || isRadar ? 16 : 55 + (hasValAxisTitle ? 20 : 0))
+      : (isPie || isRadar ? 20 : 55 + (hasValAxisTitle ? 20 : 0));
+
+  const paddingRight =
+    legendPos === 'right'
+      ? legendWidth + (isPie || isRadar ? 16 : 24)
+      : (isPie || isRadar ? 20 : 25);
+
+  const paddingTop =
+    titleHeight +
+    (legendPos === 'top' ? legendHeight + (isPie || isRadar ? 8 : 12) : (isPie || isRadar ? 8 : 10));
+
+  const paddingBottom =
+    legendPos === 'bottom'
+      ? legendHeight + (isPie || isRadar ? 16 : 35 + (hasCatAxisTitle ? 20 : 0))
+      : (isPie || isRadar ? 20 : 35 + (hasCatAxisTitle ? 20 : 0));
 
   const plotWidth = Math.max(10, width - paddingLeft - paddingRight);
   const plotHeight = Math.max(10, height - paddingTop - paddingBottom);
@@ -180,19 +219,6 @@ export function ChartRenderer({ chart, width, height }: ChartRendererProps): Rea
 
   const showGrid = chart.gridlines !== false && !isPie && !isRadar;
   const showDataLabels = chart.dataLabels && chart.dataLabels !== 'none';
-
-  // Build legend items (Pie shows categories, other charts show series)
-  const legendItems = isPie
-    ? categories.map((cat, i) => {
-        const sliceColor =
-          primarySeries?.pointColors?.find((p) => p.index === i)?.color ??
-          defaultColors[i % defaultColors.length];
-        return { name: cat || `类别 ${i + 1}`, color: sliceColor };
-      })
-    : chart.series.map((series, sIndex) => ({
-        name: series.name || `系列 ${sIndex + 1}`,
-        color: series.color ?? defaultColors[sIndex % defaultColors.length],
-      }));
 
   return (
     <div
@@ -434,7 +460,8 @@ export function ChartRenderer({ chart, width, height }: ChartRendererProps): Rea
             {(() => {
               const cx = paddingLeft + plotWidth / 2;
               const cy = paddingTop + plotHeight / 2;
-              const radius = Math.min(plotWidth, plotHeight) / 2.1;
+              const hasOutsideLabels = showDataLabels && chart.dataLabelPosition === 'outside-end';
+              const radius = Math.min(plotWidth, plotHeight) / (hasOutsideLabels ? 2.5 : 2.15);
               const vals = primarySeries?.values ?? [];
               const total = vals.reduce((sum, v) => sum + Math.max(v, 0), 0) || 1;
               let currentAngle = -Math.PI / 2;
@@ -1251,19 +1278,62 @@ export function ChartRenderer({ chart, width, height }: ChartRendererProps): Rea
           style={{
             position: 'absolute',
             ...(legendPos === 'right'
-              ? { top: paddingTop, right: 10, width: legendWidth }
+              ? {
+                  top: paddingTop,
+                  right: 8,
+                  width: legendWidth,
+                  maxHeight: Math.max(60, height - paddingTop - 12),
+                  overflowY: 'auto',
+                  overflowX: 'hidden',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  flexWrap: 'nowrap',
+                }
               : legendPos === 'left'
-                ? { top: paddingTop, left: 10, width: legendWidth }
+                ? {
+                    top: paddingTop,
+                    left: 8,
+                    width: legendWidth,
+                    maxHeight: Math.max(60, height - paddingTop - 12),
+                    overflowY: 'auto',
+                    overflowX: 'hidden',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    flexWrap: 'nowrap',
+                  }
                 : legendPos === 'top'
-                  ? { top: titleHeight + 2, left: 0, width: '100%', display: 'flex', justifyContent: 'center' }
-                  : { bottom: 6, left: 0, width: '100%', display: 'flex', justifyContent: 'center' }),
-            display: 'flex',
-            flexDirection: legendPos === 'right' || legendPos === 'left' ? 'column' : 'row',
-            flexWrap: 'wrap',
-            gap: '8px',
+                  ? {
+                      top: titleHeight + 2,
+                      left: 0,
+                      width: '100%',
+                      maxHeight: legendHeight + 8,
+                      display: 'flex',
+                      justifyContent: legendItems.length > 6 ? 'flex-start' : 'center',
+                      overflowX: 'auto',
+                      overflowY: 'hidden',
+                      flexDirection: 'row',
+                      flexWrap: 'nowrap',
+                      padding: '0 12px',
+                      boxSizing: 'border-box',
+                    }
+                  : {
+                      bottom: 4,
+                      left: 0,
+                      width: '100%',
+                      maxHeight: legendHeight + 8,
+                      display: 'flex',
+                      justifyContent: legendItems.length > 6 ? 'flex-start' : 'center',
+                      overflowX: 'auto',
+                      overflowY: 'hidden',
+                      flexDirection: 'row',
+                      flexWrap: 'nowrap',
+                      padding: '0 12px',
+                      boxSizing: 'border-box',
+                    }),
+            gap: '6px',
             fontSize: '11px',
             color: '#444',
-            overflow: 'hidden',
+            scrollbarWidth: 'thin',
           }}
         >
           {legendItems.map((item, index) => (
@@ -1274,8 +1344,11 @@ export function ChartRenderer({ chart, width, height }: ChartRendererProps): Rea
               style={{
                 display: 'flex',
                 alignItems: 'center',
-                gap: '5px',
-                maxWidth: '120px',
+                gap: '6px',
+                width: legendPos === 'right' || legendPos === 'left' ? '100%' : 'auto',
+                maxWidth: legendPos === 'right' || legendPos === 'left' ? '100%' : '140px',
+                minWidth: 0,
+                flexShrink: 0,
               }}
             >
               <span
@@ -1294,6 +1367,10 @@ export function ChartRenderer({ chart, width, height }: ChartRendererProps): Rea
                   overflow: 'hidden',
                   textOverflow: 'ellipsis',
                   whiteSpace: 'nowrap',
+                  flex: 1,
+                  minWidth: 0,
+                  fontSize: '11px',
+                  color: '#444',
                 }}
                 title={item.name}
               >

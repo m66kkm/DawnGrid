@@ -787,5 +787,253 @@ mod tests {
         let _ = fs::remove_file(&test_path);
     }
 
+    #[test]
+    fn test_save_workbook_sheet_removal() {
+        let temp_dir = std::env::temp_dir();
+        let test_path = temp_dir.join(format!("dawngrid_test_sheet_del_{}.xlsx", std::process::id()));
+
+        // Step 1: Create workbook with 2 sheets
+        let payload_2_sheets = SaveWorkbookPayload {
+            path: test_path.to_string_lossy().to_string(),
+            sheets: vec![
+                SaveSheetData {
+                    name: "Sheet1".to_string(),
+                    show_grid_lines: Some(true),
+                    freeze: None,
+                    col_widths: vec![],
+                    row_heights: vec![],
+                    merges: vec![],
+                    cells: vec![
+                        SaveCellData {
+                            r: 0,
+                            c: 0,
+                            v: Some(serde_json::Value::String("Sheet 1 Data".to_string())),
+                            f: None,
+                            style: None,
+                        },
+                    ],
+                    charts: vec![],
+                },
+                SaveSheetData {
+                    name: "Sheet2".to_string(),
+                    show_grid_lines: Some(true),
+                    freeze: None,
+                    col_widths: vec![],
+                    row_heights: vec![],
+                    merges: vec![],
+                    cells: vec![
+                        SaveCellData {
+                            r: 0,
+                            c: 0,
+                            v: Some(serde_json::Value::String("Sheet 2 Data".to_string())),
+                            f: None,
+                            style: None,
+                        },
+                    ],
+                    charts: vec![],
+                },
+            ],
+        };
+
+        let res = save_workbook_to_path(&payload_2_sheets);
+        assert!(res.is_ok(), "Failed to save initial 2-sheet workbook: {:?}", res.err());
+
+        // Verify reopening sees 2 sheets
+        {
+            let mut sessions = xlsx_sidecar::WorkbookSessions::new();
+            let meta = sessions.open(&test_path).expect("Failed to open 2-sheet xlsx");
+            assert_eq!(meta.sheets.len(), 2, "Should initially have 2 sheets");
+            assert_eq!(meta.sheets[0].name, "Sheet1");
+            assert_eq!(meta.sheets[1].name, "Sheet2");
+
+            let range = xlsx_sidecar::CellRange {
+                start_row: 0,
+                end_row: 10,
+                start_column: 0,
+                end_column: 10,
+            };
+            let res0 = sessions.read_range(&meta.session_id, &meta.sheets[0].id, &range).expect("read sheet 0");
+            println!("Sheet 0 cells: {:?}", res0.cells);
+            assert!(!res0.cells.is_empty(), "Sheet 0 should have cells");
+
+            let res1 = sessions.read_range(&meta.session_id, &meta.sheets[1].id, &range).expect("read sheet 1");
+            println!("Sheet 1 cells: {:?}", res1.cells);
+            assert!(!res1.cells.is_empty(), "Sheet 1 should have cells");
+        }
+
+        // Step 2: Simulate deleting Sheet2 and saving again (only Sheet1 in payload)
+        let payload_1_sheet = SaveWorkbookPayload {
+            path: test_path.to_string_lossy().to_string(),
+            sheets: vec![
+                SaveSheetData {
+                    name: "Sheet1".to_string(),
+                    show_grid_lines: Some(true),
+                    freeze: None,
+                    col_widths: vec![],
+                    row_heights: vec![],
+                    merges: vec![],
+                    cells: vec![
+                        SaveCellData {
+                            r: 0,
+                            c: 0,
+                            v: Some(serde_json::Value::String("Sheet 1 Data Updated".to_string())),
+                            f: None,
+                            style: None,
+                        },
+                    ],
+                    charts: vec![],
+                },
+            ],
+        };
+
+        let res2 = save_workbook_to_path(&payload_1_sheet);
+        assert!(res2.is_ok(), "Failed to save 1-sheet workbook: {:?}", res2.err());
+
+        // Verify reopening sees only 1 sheet (Sheet2 permanently deleted)
+        {
+            let mut sessions = xlsx_sidecar::WorkbookSessions::new();
+            let meta = sessions.open(&test_path).expect("Failed to open 1-sheet xlsx");
+            assert_eq!(meta.sheets.len(), 1, "Should now have only 1 sheet");
+            assert_eq!(meta.sheets[0].name, "Sheet1");
+        }
+
+        // Clean up
+        let _ = fs::remove_file(&test_path);
+    }
+
+    #[test]
+    fn test_save_and_reopen_two_sheets_with_chart_on_sheet2() {
+        let temp_dir = std::env::temp_dir();
+        let test_path = temp_dir.join(format!("dawngrid_test_2s_chart_{}.xlsx", std::process::id()));
+
+        let payload = SaveWorkbookPayload {
+            path: test_path.to_string_lossy().to_string(),
+            sheets: vec![
+                SaveSheetData {
+                    name: "Sheet1".to_string(),
+                    show_grid_lines: Some(true),
+                    freeze: None,
+                    col_widths: vec![],
+                    row_heights: vec![],
+                    merges: vec![],
+                    cells: vec![
+                        SaveCellData {
+                            r: 0,
+                            c: 0,
+                            v: Some(serde_json::Value::String("Sheet 1 Title".to_string())),
+                            f: None,
+                            style: None,
+                        },
+                    ],
+                    charts: vec![],
+                },
+                SaveSheetData {
+                    name: "Sheet2".to_string(),
+                    show_grid_lines: Some(true),
+                    freeze: None,
+                    col_widths: vec![],
+                    row_heights: vec![],
+                    merges: vec![],
+                    cells: vec![
+                        SaveCellData {
+                            r: 0,
+                            c: 0,
+                            v: Some(serde_json::Value::String("Category".to_string())),
+                            f: None,
+                            style: None,
+                        },
+                        SaveCellData {
+                            r: 0,
+                            c: 1,
+                            v: Some(serde_json::Value::String("Value".to_string())),
+                            f: None,
+                            style: None,
+                        },
+                        SaveCellData {
+                            r: 1,
+                            c: 0,
+                            v: Some(serde_json::Value::String("Item A".to_string())),
+                            f: None,
+                            style: None,
+                        },
+                        SaveCellData {
+                            r: 1,
+                            c: 1,
+                            v: Some(serde_json::Value::Number(serde_json::Number::from_f64(150.0).unwrap())),
+                            f: None,
+                            style: None,
+                        },
+                    ],
+                    charts: vec![
+                        SaveChartData {
+                            id: "chart-2".to_string(),
+                            title: Some("Sheet 2 Chart".to_string()),
+                            chart_type: "pieChart".to_string(),
+                            bar_direction: None,
+                            grouping: None,
+                            sheet_id: "Sheet2".to_string(),
+                            sheet_name: Some("Sheet2".to_string()),
+                            x: 80.0,
+                            y: 60.0,
+                            width: 500.0,
+                            height: 320.0,
+                            legend: Some("right".to_string()),
+                            data_labels: Some("percent".to_string()),
+                            data_label_position: Some("outsideEnd".to_string()),
+                            data_label_format: Some("0.0%".to_string()),
+                            gridlines: Some(false),
+                            value_axis: None,
+                            hole_size_pct: None,
+                            gap_width_pct: None,
+                            series: vec![
+                                SaveChartSeries {
+                                    name: Some("Series1".to_string()),
+                                    values_ref: Some("Sheet2!$B$2:$B$2".to_string()),
+                                    categories_ref: Some("Sheet2!$A$2:$A$2".to_string()),
+                                    values: vec![],
+                                    categories: vec![],
+                                    color: None,
+                                    point_colors: vec![],
+                                    explosion_pct: None,
+                                },
+                            ],
+                        },
+                    ],
+                },
+            ],
+        };
+
+        let res = save_workbook_to_path(&payload);
+        assert!(res.is_ok(), "Failed to save: {:?}", res.err());
+
+        // Reopen with xlsx-engine
+        let mut sessions = xlsx_sidecar::WorkbookSessions::new();
+        let meta = sessions.open(&test_path).expect("Failed to open saved xlsx");
+        println!("Reopened sheets count: {}", meta.sheets.len());
+        for (i, s) in meta.sheets.iter().enumerate() {
+            println!("Sheet[{}]: id={}, name={}, row_count={}, col_count={}", i, s.id, s.name, s.row_count, s.column_count);
+        }
+
+        let range = xlsx_sidecar::CellRange {
+            start_row: 0,
+            end_row: 5,
+            start_column: 0,
+            end_column: 5,
+        };
+
+        let r0 = sessions.read_range(&meta.session_id, &meta.sheets[0].id, &range).expect("read sheet 0");
+        println!("Sheet 0 cells count: {}", r0.cells.len());
+
+        let r1 = sessions.read_range(&meta.session_id, &meta.sheets[1].id, &range).expect("read sheet 1");
+        println!("Sheet 1 cells count: {}", r1.cells.len());
+        assert!(!r1.cells.is_empty(), "Sheet 1 (second sheet) should have cells");
+
+        println!("Visuals count: {}", meta.visuals.len());
+        for (i, v) in meta.visuals.iter().enumerate() {
+            println!("Visual[{}]: sheet_id={}, kind={:?}", i, v.sheet_id, v.kind);
+        }
+
+        let _ = fs::remove_file(&test_path);
+    }
 }
 

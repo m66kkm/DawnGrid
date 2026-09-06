@@ -202,17 +202,24 @@ git clone git@github.com:m66kkm/DawnGrid.git
 cd DawnGrid
 
 # 2. 安装前端依赖
-npm install
+bun install
 
-# 3. 启动桌面开发环境 (同时拉起 Vite 与 Tauri 调试器)
-npm run tauri dev
+# 3. 启动桌面应用开发环境 (直接启动客户端应用)
+bun run dev
+
+# 若仅需在浏览器调试 Web 前端:
+bun run dev:web
 ```
 
 ### 构建发布包 (Production Release)
 ```bash
-npm run tauri build
+# 方式 1：标准构建
+bun run tauri:build
+
+# 方式 2：构建并自动提取安装包到根目录 target/
+bun run deploy
 ```
-编译产物将生成在 `src-tauri/target/release/` 下，包含免安装 `.exe` 与完整 MSI 安装程序。
+编译产物将生成在 `src-tauri/target/release/` 下（使用 `bun run deploy` 可直接提取至 `target/` 目录）。
 
 ---
 

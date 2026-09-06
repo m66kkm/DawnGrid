@@ -1,6 +1,6 @@
 [package]
 name = "dawngrid"
-version = "0.1.0"
+version = "0.1.1"
 description = "DawnGrid - High-performance Native Spreadsheet"
 authors = ["DawnGrid Contributors"]
 edition = "2021"

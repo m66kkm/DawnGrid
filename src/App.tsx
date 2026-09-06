@@ -30,7 +30,7 @@ import {
   openWorkbookFile,
   saveWorkbookToDisk,
 } from "./univer-adapter";
-import type { WorkbookMetadata } from "./types";
+import type { SheetMetadata, WorkbookMetadata } from "./types";
 import { Ribbon } from "./Ribbon";
 import { FormatCellsDialog } from "./FormatCellsDialog";
 import { InsertFunctionDialog } from "./InsertFunctionDialog";
@@ -186,6 +186,18 @@ export default function App() {
   const chartsRef = useRef<SheetVisual[]>(charts);
   chartsRef.current = charts;
   const [activeChartId, setActiveChartId] = useState<string | null>(null);
+  const activeChartIdRef = useRef<string | null>(null);
+  activeChartIdRef.current = activeChartId;
+
+  const clearActiveChart = useCallback(() => {
+    if (activeChartIdRef.current !== null) {
+      setActiveChartId(null);
+      setSelectedChart(false);
+    }
+  }, []);
+  const clearActiveChartRef = useRef(clearActiveChart);
+  clearActiveChartRef.current = clearActiveChart;
+
   const [activeSheetId, setActiveSheetId] = useState<string>("sheet-1");
   const activeSheetIdRef = useRef<string>("sheet-1");
   const workbookSubRef = useRef<any>(null);
@@ -199,27 +211,42 @@ export default function App() {
       setActiveSheetId(sheetId);
       activeSheetIdRef.current = sheetId;
     }
-    // Deselect chart if active chart was on a different sheet
-    if (activeChartId) {
-      const cur = chartsRef.current.find((c) => c.id === activeChartId);
-      if (cur && cur.sheetId && cur.sheetId !== sheetId) {
-        setActiveChartId(null);
-        setSelectedChart(false);
-      }
+    // Deselect chart whenever sheet is switched
+    if (activeChartIdRef.current !== null) {
+      setActiveChartId(null);
+      setSelectedChart(false);
     }
     // Lazy-load sheet data if opening an existing file with multiple sheets
     if (currentMetaRef.current) {
       const targetSheet = currentMetaRef.current.sheets.find(
         (s) => s.id === sheetId || s.name === sheetId
       );
-      if (targetSheet && !loadedSheetIdsRef.current.has(targetSheet.id)) {
-        void loadWorksheetData(
-          univerRef.current!,
-          currentMetaRef.current,
-          targetSheet,
-          loadedSheetIdsRef.current,
-          setStatus,
-        );
+      if (targetSheet) {
+        let needsLoad = !loadedSheetIdsRef.current.has(targetSheet.id);
+        if (!needsLoad && targetSheet.rowCount > 0) {
+          try {
+            const wb = univerRef.current?.univerAPI.getActiveWorkbook();
+            const ws = wb?.getSheetBySheetId(targetSheet.id);
+            const val = ws?.getRange(0, 0, 1, 1)?.getValue();
+            if (val === null || val === undefined || val === "") {
+              const snap = (wb as any)?.getSnapshot?.()?.sheets?.[targetSheet.id];
+              const cData = snap?.cellData;
+              if (!cData || Object.keys(cData).length === 0) {
+                needsLoad = true;
+              }
+            }
+          } catch {}
+        }
+        if (needsLoad && targetSheet.rowCount > 0) {
+          loadedSheetIdsRef.current.delete(targetSheet.id);
+          void loadWorksheetData(
+            univerRef.current!,
+            currentMetaRef.current,
+            targetSheet,
+            loadedSheetIdsRef.current,
+            setStatus,
+          );
+        }
       }
     }
   }, [activeChartId]);
@@ -586,6 +613,7 @@ export default function App() {
       (runtime.univerAPI as any).Event?.SelectionChanged,
       () => {
         syncSelectionState();
+        clearActiveChartRef.current();
       }
     );
 
@@ -599,16 +627,154 @@ export default function App() {
       }
     );
 
+    const subSheetDeleted = (runtime.univerAPI as any).addEvent?.(
+      (runtime.univerAPI as any).Event?.SheetDeleted,
+      (params: any) => {
+        const removedSheetId = params?.sheetId;
+        if (removedSheetId) {
+          loadedSheetIdsRef.current.delete(removedSheetId);
+          if (currentMetaRef.current) {
+            const nextSheets = currentMetaRef.current.sheets.filter(
+              (s) => s.id !== removedSheetId && s.name !== removedSheetId
+            );
+            const updatedMeta = {
+              ...currentMetaRef.current,
+              sheets: nextSheets,
+            };
+            currentMetaRef.current = updatedMeta;
+            setMetadata(updatedMeta);
+          }
+          setCharts((prev) => prev.filter((c) => c.sheetId !== removedSheetId));
+          setTimeout(() => {
+            try {
+              const curWb = runtime.univerAPI.getActiveWorkbook();
+              const curWs = curWb?.getActiveSheet();
+              const actualId = curWs?.getSheetId?.();
+              if (actualId && actualId !== removedSheetId) {
+                handleActiveSheetSwitchRef.current(actualId);
+              }
+            } catch {}
+          }, 30);
+        }
+      }
+    );
+
     const subCommand = (runtime.univerAPI as any).onCommandExecuted?.((command: any) => {
       syncSelectionState();
+
+      // Clear chart selection when user changes worksheet selection / edits cells
+      if (
+        command?.id === "sheet.operation.set-selections" ||
+        command?.id === "sheet.command.set-selections" ||
+        command?.id === "sheet.mutation.set-selections" ||
+        command?.id === "sheet.operation.set-cell-edit-visible"
+      ) {
+        clearActiveChartRef.current();
+      }
+
+      // 1. Handle sheet removal
+      if (
+        command?.id === "sheet.mutation.remove-sheet" ||
+        command?.id === "sheet.command.remove-sheet"
+      ) {
+        const removedSheetId =
+          command?.params?.subUnitId ||
+          command?.params?.sheetId ||
+          command?.params?.sheet?.id;
+
+        if (removedSheetId) {
+          loadedSheetIdsRef.current.delete(removedSheetId);
+          if (currentMetaRef.current) {
+            const nextSheets = currentMetaRef.current.sheets.filter(
+              (s) => s.id !== removedSheetId && s.name !== removedSheetId
+            );
+            const updatedMeta = {
+              ...currentMetaRef.current,
+              sheets: nextSheets,
+            };
+            currentMetaRef.current = updatedMeta;
+            setMetadata(updatedMeta);
+          }
+          setCharts((prev) => prev.filter((c) => c.sheetId !== removedSheetId));
+          setTimeout(() => {
+            try {
+              const curWb = runtime.univerAPI.getActiveWorkbook();
+              const curWs = curWb?.getActiveSheet();
+              const actualId = curWs?.getSheetId?.();
+              if (actualId && actualId !== removedSheetId) {
+                handleActiveSheetSwitchRef.current(actualId);
+              }
+            } catch {}
+          }, 30);
+        }
+        return;
+      }
+
+      // 2. Handle sheet insertion
+      if (
+        command?.id === "sheet.mutation.insert-sheet" ||
+        command?.id === "sheet.command.insert-sheet"
+      ) {
+        const insertedSheet = command?.params?.sheet;
+        const insertedId = insertedSheet?.id || command?.params?.subUnitId;
+        const insertedName =
+          insertedSheet?.name ||
+          `Sheet${(currentMetaRef.current?.sheets.length || 0) + 1}`;
+
+        if (insertedId) {
+          loadedSheetIdsRef.current.add(insertedId);
+          if (currentMetaRef.current) {
+            if (!currentMetaRef.current.sheets.some((s) => s.id === insertedId || s.name === insertedName)) {
+              const newSheetMeta: SheetMetadata = {
+                id: insertedId,
+                name: insertedName,
+                rowCount: insertedSheet?.rowCount || 100,
+                columnCount: insertedSheet?.columnCount || 30,
+                columnWidths: [],
+                showGridLines: true,
+                showFormulas: false,
+                rightToLeft: false,
+                hidden: false,
+              };
+              const updatedMeta = {
+                ...currentMetaRef.current,
+                sheets: [...currentMetaRef.current.sheets, newSheetMeta],
+              };
+              currentMetaRef.current = updatedMeta;
+              setMetadata(updatedMeta);
+            }
+          }
+          handleActiveSheetSwitchRef.current(insertedId);
+        }
+        return;
+      }
+
+      // 3. Handle sheet rename
+      if (
+        command?.id === "sheet.command.set-worksheet-name" ||
+        command?.id === "sheet.mutation.set-worksheet-name"
+      ) {
+        const targetId = command?.params?.subUnitId;
+        const newName = command?.params?.name;
+        if (targetId && newName && currentMetaRef.current) {
+          const nextSheets = currentMetaRef.current.sheets.map((s) =>
+            s.id === targetId ? { ...s, name: newName } : s
+          );
+          const updatedMeta = {
+            ...currentMetaRef.current,
+            sheets: nextSheets,
+          };
+          currentMetaRef.current = updatedMeta;
+          setMetadata(updatedMeta);
+        }
+        return;
+      }
+
+      // 4. Handle active sheet switch
       const isSheetSwitch =
         command?.id === "sheet.operation.set-worksheet-active" ||
         command?.id === "sheet.command.set-worksheet-activate" ||
-        command?.id === "sheet.command.insert-sheet" ||
-        command?.id === "sheet.mutation.insert-sheet" ||
         command?.id === "sheet.operation.set-selections" ||
-        command?.id === "sheet.mutation.remove-sheet" ||
-        command?.id === "sheet.command.remove-sheet" ||
         command?.id === "sheet.mutation.set-worksheet-order";
 
       if (isSheetSwitch) {
@@ -669,6 +835,7 @@ export default function App() {
       subWbCreated?.dispose?.();
       subSelection?.dispose?.();
       subSheet?.dispose?.();
+      subSheetDeleted?.dispose?.();
       subCommand?.dispose?.();
       workbookSubRef.current?.unsubscribe?.();
       clearInterval(syncInterval);
@@ -817,6 +984,9 @@ export default function App() {
         setStatus,
         chartsRef.current,
       );
+      if (currentMetaRef.current) {
+        setMetadata({ ...currentMetaRef.current });
+      }
       setStatus(`表格已成功保存至: ${fileToSave}`);
     } catch (err) {
       console.error("保存失败:", err);
@@ -3003,8 +3173,19 @@ export default function App() {
         definedNames={definedNames.map((n) => n.name)}
       />
 
-      <main className="univer-grid-wrapper" style={{ position: "relative" }}>
-        <div id="univer-container" />
+      <main
+        className="univer-grid-wrapper"
+        style={{ position: "relative" }}
+        onMouseDown={() => {
+          clearActiveChartRef.current();
+        }}
+      >
+        <div
+          id="univer-container"
+          onMouseDown={() => {
+            clearActiveChartRef.current();
+          }}
+        />
         <ChartOverlay
           charts={visibleCharts}
           activeChartId={activeChartId}
