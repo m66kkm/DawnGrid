@@ -17,6 +17,7 @@ export interface RibbonProps {
   canRedo?: boolean;
   onUndo?: () => void;
   onRedo?: () => void;
+  onNewWorkbook?: () => void;
   onSave?: () => void;
   onSaveAs?: () => void;
   onOpenFile?: () => void;
@@ -73,6 +74,7 @@ export function Ribbon({
   canRedo = true,
   onUndo,
   onRedo,
+  onNewWorkbook,
   onSave,
   onSaveAs,
   onOpenFile,
@@ -94,6 +96,20 @@ export function Ribbon({
 }: RibbonProps) {
   const [activeTab, setActiveTab] = useState<TabType>("开始");
   const [autoSave, setAutoSave] = useState(true);
+  const [isFileMenuOpen, setIsFileMenuOpen] = useState(false);
+  const fileMenuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (fileMenuRef.current && !fileMenuRef.current.contains(e.target as Node)) {
+        setIsFileMenuOpen(false);
+      }
+    }
+    if (isFileMenuOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+      return () => document.removeEventListener("mousedown", handleClickOutside);
+    }
+  }, [isFileMenuOpen]);
 
   // Active formatting state
   const [fontFamily, setFontFamily] = useState("Aptos");
@@ -280,6 +296,87 @@ export function Ribbon({
         </label>
 
         <span className="qa-sep" aria-hidden="true" />
+
+        <div className="file-menu-container" ref={fileMenuRef}>
+          <button
+            type="button"
+            className={`tab-btn file-tab-btn ${isFileMenuOpen ? "active" : ""}`}
+            onClick={() => setIsFileMenuOpen((prev) => !prev)}
+            title="文件菜单 (新建、打开、保存、另存为、导出)"
+          >
+            文件
+          </button>
+          {isFileMenuOpen && (
+            <div className="file-menu-dropdown">
+              <div
+                className="file-menu-item"
+                onClick={() => {
+                  setIsFileMenuOpen(false);
+                  onNewWorkbook?.();
+                }}
+              >
+                <span className="file-menu-icon">📄</span>
+                <span className="file-menu-label">新建表格</span>
+                <span className="file-menu-shortcut">Ctrl+N</span>
+              </div>
+              <div
+                className="file-menu-item"
+                onClick={() => {
+                  setIsFileMenuOpen(false);
+                  onOpenFile?.();
+                }}
+              >
+                <span className="file-menu-icon">📂</span>
+                <span className="file-menu-label">打开文件...</span>
+                <span className="file-menu-shortcut">Ctrl+O</span>
+              </div>
+              <div className="file-menu-separator" />
+              <div
+                className="file-menu-item"
+                onClick={() => {
+                  setIsFileMenuOpen(false);
+                  onSave?.();
+                }}
+              >
+                <span className="file-menu-icon">💾</span>
+                <span className="file-menu-label">保存</span>
+                <span className="file-menu-shortcut">Ctrl+S</span>
+              </div>
+              <div
+                className="file-menu-item"
+                onClick={() => {
+                  setIsFileMenuOpen(false);
+                  onSaveAs?.();
+                }}
+              >
+                <span className="file-menu-icon">💾</span>
+                <span className="file-menu-label">另存为...</span>
+                <span className="file-menu-shortcut">F12</span>
+              </div>
+              <div className="file-menu-separator" />
+              <div
+                className="file-menu-item"
+                onClick={() => {
+                  setIsFileMenuOpen(false);
+                  onCommand("export-pdf");
+                }}
+              >
+                <span className="file-menu-icon">📑</span>
+                <span className="file-menu-label">导出为 PDF...</span>
+              </div>
+              <div
+                className="file-menu-item"
+                onClick={() => {
+                  setIsFileMenuOpen(false);
+                  onCommand("workbook-stats");
+                }}
+              >
+                <span className="file-menu-icon">📊</span>
+                <span className="file-menu-label">工作簿统计信息</span>
+              </div>
+            </div>
+          )}
+        </div>
 
         {visibleTabs.map((tab) => (
           <button

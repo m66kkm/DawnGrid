@@ -1,6 +1,7 @@
 pub mod commands;
+pub mod save_xlsx;
 
-use commands::{close_workbook, get_system_fonts, open_workbook, read_range, AppState};
+use commands::{close_workbook, get_system_fonts, open_workbook, read_range, save_workbook, AppState};
 use std::sync::Mutex;
 use xlsx_sidecar::WorkbookSessions;
 
@@ -18,9 +19,11 @@ pub fn run() {
             open_workbook,
             read_range,
             close_workbook,
+            save_workbook,
             get_system_fonts
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
+
 

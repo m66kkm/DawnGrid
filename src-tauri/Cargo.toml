@@ -26,6 +26,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 xlsx-sidecar = { path = "./xlsx-engine" }
 winreg = "0.56.0"
+rust_xlsxwriter = { version = "0.99", default-features = false }
+
 
 
 

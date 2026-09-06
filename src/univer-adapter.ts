@@ -250,3 +250,247 @@ export async function loadWorksheetData(
   }
 }
 
+export interface SaveCellStyle {
+  bold?: boolean
+  italic?: boolean
+  underline?: boolean
+  strike?: boolean
+  fontSize?: number
+  fontFamily?: string
+  fontColor?: string
+  bgColor?: string
+  numFormat?: string
+  wrapText?: boolean
+  alignH?: string
+  alignV?: string
+}
+
+export interface SaveMergeRange {
+  startRow: number
+  startCol: number
+  endRow: number
+  endCol: number
+}
+
+export interface SaveColWidth {
+  col: number
+  width: number
+}
+
+export interface SaveRowHeight {
+  row: number
+  height: number
+}
+
+export interface SaveFreeze {
+  row: number
+  col: number
+}
+
+export interface SaveCellData {
+  r: number
+  c: number
+  v?: unknown
+  f?: string
+  style?: SaveCellStyle
+}
+
+export interface SaveSheetData {
+  name: string
+  showGridLines?: boolean
+  freeze?: SaveFreeze
+  colWidths: SaveColWidth[]
+  rowHeights: SaveRowHeight[]
+  merges: SaveMergeRange[]
+  cells: SaveCellData[]
+}
+
+export interface SaveWorkbookPayload {
+  path: string
+  sheets: SaveSheetData[]
+}
+
+export async function saveWorkbookToDisk(
+  runtime: UniverRuntime,
+  filePath: string,
+  currentMeta?: WorkbookMetadata | null,
+  loadedSheetIds?: Set<string>,
+  onStatus?: (text: string) => void,
+): Promise<void> {
+  // If opening from an existing file, ensure all worksheets have been read into Univer
+  if (currentMeta && loadedSheetIds) {
+    for (const sheet of currentMeta.sheets) {
+      if (!loadedSheetIds.has(sheet.id)) {
+        onStatus?.(`正在加载工作表: ${sheet.name} 数据以供保存...`)
+        await loadWorksheetData(runtime, currentMeta, sheet, loadedSheetIds, onStatus)
+      }
+    }
+  }
+
+  const activeWorkbook = runtime.univerAPI.getActiveWorkbook()
+  if (!activeWorkbook) {
+    throw new Error('未找到当前活动工作簿')
+  }
+
+  const snapshot = activeWorkbook.getSnapshot() as any
+  if (!snapshot || !snapshot.sheets) {
+    throw new Error('工作簿数据快照获取失败')
+  }
+
+  const stylesPool = snapshot.styles || {}
+  const sheetOrder: string[] =
+    snapshot.sheetOrder && snapshot.sheetOrder.length > 0
+      ? snapshot.sheetOrder
+      : Object.keys(snapshot.sheets)
+
+  const sheetsPayload: SaveSheetData[] = []
+
+  for (const sheetId of sheetOrder) {
+    const sheetData = snapshot.sheets[sheetId]
+    if (!sheetData) continue
+
+    const sheetName: string = sheetData.name || 'Sheet'
+    const showGridLines = sheetData.showGridlines !== 0
+
+    let freeze: SaveFreeze | undefined
+    if (sheetData.freeze && (sheetData.freeze.ySplit || sheetData.freeze.xSplit)) {
+      freeze = {
+        row: sheetData.freeze.ySplit || 0,
+        col: sheetData.freeze.xSplit || 0,
+      }
+    }
+
+    // Column widths
+    const colWidths: SaveColWidth[] = []
+    if (sheetData.columnData) {
+      for (const [colStr, colObj] of Object.entries(sheetData.columnData as Record<string, any>)) {
+        const c = Number(colStr)
+        if (!isNaN(c) && colObj && typeof colObj.w === 'number' && colObj.w > 0) {
+          colWidths.push({
+            col: c,
+            width: Math.max(1, +(colObj.w / 8).toFixed(1)),
+          })
+        }
+      }
+    }
+
+    // Row heights
+    const rowHeights: SaveRowHeight[] = []
+    if (sheetData.rowData) {
+      for (const [rowStr, rowObj] of Object.entries(sheetData.rowData as Record<string, any>)) {
+        const r = Number(rowStr)
+        if (!isNaN(r) && rowObj && typeof rowObj.h === 'number' && rowObj.h > 0) {
+          rowHeights.push({
+            row: r,
+            height: Math.max(1, +(rowObj.h * 72 / 96).toFixed(1)),
+          })
+        }
+      }
+    }
+
+    // Merges
+    const merges: SaveMergeRange[] = []
+    if (Array.isArray(sheetData.mergeData)) {
+      for (const m of sheetData.mergeData) {
+        if (m && typeof m.startRow === 'number') {
+          merges.push({
+            startRow: m.startRow,
+            endRow: m.endRow,
+            startCol: m.startColumn,
+            endCol: m.endColumn,
+          })
+        }
+      }
+    }
+
+    // Cells
+    const cells: SaveCellData[] = []
+    let matrix = sheetData.cellData
+    if (matrix && typeof matrix.getMatrix === 'function') {
+      matrix = matrix.getMatrix()
+    } else if (matrix && typeof matrix.getData === 'function') {
+      matrix = matrix.getData()
+    }
+
+    if (matrix) {
+      for (const [rowStr, colMap] of Object.entries(matrix as Record<string, any>)) {
+        const r = Number(rowStr)
+        if (isNaN(r) || !colMap) continue
+
+        for (const [colStr, cell] of Object.entries(colMap as Record<string, any>)) {
+          const c = Number(colStr)
+          if (isNaN(c) || !cell) continue
+
+          let rawStyle: any = undefined
+          if (typeof cell.s === 'string') {
+            rawStyle = stylesPool[cell.s]
+          } else if (cell.s && typeof cell.s === 'object') {
+            rawStyle = cell.s
+          }
+
+          let style: SaveCellStyle | undefined
+          if (rawStyle) {
+            style = {}
+            if (rawStyle.bl) style.bold = true
+            if (rawStyle.it) style.italic = true
+            if (rawStyle.ul?.s) style.underline = true
+            if (rawStyle.st?.s) style.strike = true
+            if (typeof rawStyle.fs === 'number') style.fontSize = rawStyle.fs
+            if (rawStyle.ff) style.fontFamily = rawStyle.ff
+            if (rawStyle.cl?.rgb) style.fontColor = rawStyle.cl.rgb
+            if (rawStyle.bg?.rgb) style.bgColor = rawStyle.bg.rgb
+            if (rawStyle.n?.pattern) style.numFormat = rawStyle.n.pattern
+            if (rawStyle.tb === 3) style.wrapText = true
+            if (rawStyle.ht === 1) style.alignH = 'left'
+            else if (rawStyle.ht === 2) style.alignH = 'center'
+            else if (rawStyle.ht === 3) style.alignH = 'right'
+            if (rawStyle.vt === 1) style.alignV = 'top'
+            else if (rawStyle.vt === 2) style.alignV = 'center'
+            else if (rawStyle.vt === 3) style.alignV = 'bottom'
+
+            if (Object.keys(style).length === 0) {
+              style = undefined
+            }
+          }
+
+          let v = cell.v
+          if (v === undefined && cell.p?.body?.dataStream) {
+            v = cell.p.body.dataStream.replace(/\r?\n$/, '')
+          }
+
+          const hasVal = v !== undefined && v !== null
+          const hasFormula = Boolean(cell.f)
+
+          if (hasVal || hasFormula || style) {
+            cells.push({
+              r,
+              c,
+              v: hasVal ? v : null,
+              f: hasFormula ? cell.f : undefined,
+              style,
+            })
+          }
+        }
+      }
+    }
+
+    sheetsPayload.push({
+      name: sheetName,
+      showGridLines,
+      freeze,
+      colWidths,
+      rowHeights,
+      merges,
+      cells,
+    })
+  }
+
+  await invoke('save_workbook', {
+    payload: {
+      path: filePath,
+      sheets: sheetsPayload,
+    },
+  })
+}
+
+

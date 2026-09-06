@@ -54,6 +54,12 @@ pub fn close_workbook(state: State<AppState>, session_id: String) -> Result<(), 
 }
 
 #[tauri::command]
+pub fn save_workbook(payload: crate::save_xlsx::SaveWorkbookPayload) -> Result<(), String> {
+    crate::save_xlsx::save_workbook_to_path(&payload)
+}
+
+
+#[tauri::command]
 pub fn get_system_fonts() -> Vec<String> {
     #[cfg(target_os = "windows")]
     {

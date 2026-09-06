@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { LocaleType, mergeLocales } from "@univerjs/core";
@@ -26,6 +27,7 @@ import {
   loadWorkbookSkeleton,
   loadWorksheetData,
   openWorkbookFile,
+  saveWorkbookToDisk,
 } from "./univer-adapter";
 import type { WorkbookMetadata } from "./types";
 import { Ribbon } from "./Ribbon";
@@ -75,6 +77,10 @@ export default function App() {
   const currentMetaRef = useRef<WorkbookMetadata | null>(null);
   const loadedSheetIdsRef = useRef<Set<string>>(new Set());
   const [currentFile, setCurrentFile] = useState<string | null>(null);
+  const currentFileRef = useRef<string | null>(null);
+  currentFileRef.current = currentFile;
+  const handleSaveRef = useRef<() => Promise<void>>(() => Promise.resolve());
+  const handleSaveAsRef = useRef<() => Promise<void>>(() => Promise.resolve());
   const [metadata, setMetadata] = useState<WorkbookMetadata | null>(null);
   const [status, setStatus] = useState<string>("就绪");
   const [loading, setLoading] = useState<boolean>(false);
@@ -411,12 +417,44 @@ export default function App() {
     }
   }
 
-  function handleSave() {
-    setStatus("表格已自动保存 (实时缓存)");
+  async function handleSave() {
+    const runtime = univerRef.current;
+    if (!runtime) return;
+
+    const fileToSave = currentFileRef.current;
+    if (!fileToSave) {
+      await handleSaveAs();
+      return;
+    }
+
+    try {
+      setLoading(true);
+      setStatus("正在保存表格...");
+      await saveWorkbookToDisk(
+        runtime,
+        fileToSave,
+        currentMetaRef.current,
+        loadedSheetIdsRef.current,
+        setStatus,
+      );
+      setStatus(`表格已成功保存至: ${fileToSave}`);
+    } catch (err) {
+      console.error("保存失败:", err);
+      setStatus(`保存失败: ${String(err)}`);
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function handleSaveAs() {
+    const runtime = univerRef.current;
+    if (!runtime) return;
+
     try {
+      const defaultName =
+        currentMetaRef.current?.name ||
+        (currentFileRef.current ? currentFileRef.current.split(/[/\\]/).pop() : "表格导出.xlsx");
+
       const path = await save({
         filters: [
           {
@@ -424,15 +462,75 @@ export default function App() {
             extensions: ["xlsx"],
           },
         ],
-        defaultPath: metadata?.name || "表格导出.xlsx",
+        defaultPath: defaultName || "表格导出.xlsx",
       });
+
       if (path) {
-        setStatus(`已另存为: ${path}`);
+        setLoading(true);
+        setStatus("正在另存为...");
+        await saveWorkbookToDisk(
+          runtime,
+          path,
+          currentMetaRef.current,
+          loadedSheetIdsRef.current,
+          setStatus,
+        );
+        setCurrentFile(path);
+        currentFileRef.current = path;
+        const fileName = path.split(/[/\\]/).pop() || path;
+        if (currentMetaRef.current) {
+          const updatedMeta = { ...currentMetaRef.current, name: fileName };
+          setMetadata(updatedMeta);
+          currentMetaRef.current = updatedMeta;
+        }
+        setStatus(`已成功另存为: ${path}`);
       }
     } catch (err) {
-      console.error(err);
+      console.error("另存为失败:", err);
+      setStatus(`另存为失败: ${String(err)}`);
+    } finally {
+      setLoading(false);
     }
   }
+
+  function handleNewWorkbook() {
+    const runtime = univerRef.current;
+    if (!runtime) return;
+
+    if (currentMetaRef.current?.sessionId) {
+      void invoke("close_workbook", { sessionId: currentMetaRef.current.sessionId }).catch(console.error);
+    }
+
+    const activeWorkbook = runtime.univerAPI.getActiveWorkbook();
+    if (activeWorkbook) {
+      runtime.univerAPI.disposeUnit(activeWorkbook.getId());
+    }
+
+    runtime.univerAPI.createWorkbook({
+      id: `blank-wb-${Date.now()}`,
+      name: "未命名表格.xlsx",
+      sheetOrder: ["sheet-1"],
+      sheets: {
+        "sheet-1": {
+          id: "sheet-1",
+          name: "Sheet1",
+          rowCount: 100,
+          columnCount: 30,
+          cellData: {},
+        },
+      },
+    });
+
+    setCurrentFile(null);
+    currentFileRef.current = null;
+    setMetadata(null);
+    currentMetaRef.current = null;
+    loadedSheetIdsRef.current.clear();
+    setStatus("已新建空白表格");
+  }
+
+  handleSaveRef.current = handleSave;
+  handleSaveAsRef.current = handleSaveAs;
 
   function handleUndo() {
     const runtime = univerRef.current;
@@ -2075,9 +2173,15 @@ export default function App() {
     }
   }
 
-  // Keyboard shortcuts (Ctrl+O, Ctrl+S, Ctrl+Z, Ctrl+Y, Ctrl+1, Ctrl+G, Ctrl+B, Ctrl+I, Ctrl+U)
+  // Keyboard shortcuts (Ctrl+O, Ctrl+S, Ctrl+Shift+S, F12, Ctrl+N, Ctrl+Z, Ctrl+Y, Ctrl+1, Ctrl+G, Ctrl+B, Ctrl+I, Ctrl+U)
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "F12") {
+        e.preventDefault();
+        void handleSaveAsRef.current();
+        return;
+      }
+
       if (e.ctrlKey || e.metaKey) {
         if (e.key === "1") {
           e.preventDefault();
@@ -2099,7 +2203,14 @@ export default function App() {
           void handleOpenFile();
         } else if (e.key === "s" || e.key === "S") {
           e.preventDefault();
-          handleSave();
+          if (e.shiftKey) {
+            void handleSaveAsRef.current();
+          } else {
+            void handleSaveRef.current();
+          }
+        } else if (e.key === "n" || e.key === "N") {
+          e.preventDefault();
+          handleNewWorkbook();
         } else if (e.key === "z" || e.key === "Z") {
           if (e.shiftKey) {
             e.preventDefault();
@@ -2133,6 +2244,7 @@ export default function App() {
         canRedo={true}
         onUndo={handleUndo}
         onRedo={handleRedo}
+        onNewWorkbook={handleNewWorkbook}
         onSave={handleSave}
         onSaveAs={handleSaveAs}
         onOpenFile={handleOpenFile}
