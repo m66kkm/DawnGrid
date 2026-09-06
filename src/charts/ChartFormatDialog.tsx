@@ -43,8 +43,10 @@ function ChartFormatDialogContent({
   const [gapWidth, setGapWidth] = useState(chart.gapWidthPct ?? 150);
   const [explosion, setExplosion] = useState(chart.series[0]?.explosionPct ?? 0);
   const [holeSize, setHoleSize] = useState(chart.holeSizePct ?? 50);
+  const [dataLabelFormat, setDataLabelFormat] = useState<string>(chart.dataLabelFormat ?? '');
 
-  const isBar = chart.chartTypes.includes('barChart');
+  const isBar = chart.chartTypes.includes('barChart') && chart.barDirection === 'bar';
+  const isColumn = chart.chartTypes.includes('barChart') && chart.barDirection !== 'bar';
   const isPie = chart.chartTypes.includes('pieChart') || chart.chartTypes.includes('doughnutChart');
   const isDoughnut = chart.chartTypes.includes('doughnutChart');
 
@@ -76,6 +78,7 @@ function ChartFormatDialogContent({
       legend,
       dataLabels,
       dataLabelPosition: dataLabelPos,
+      dataLabelFormat: dataLabelFormat.trim() !== '' ? dataLabelFormat.trim() : undefined,
       gridlines,
       valueAxis: {
         min: Number.isFinite(minNum) ? minNum : null,
@@ -192,41 +195,108 @@ function ChartFormatDialogContent({
 
           {/* 3. 数据标签 */}
           <div style={{ borderBottom: '1px solid #e1e4e8', paddingBottom: '14px' }}>
-            <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: '#24292f', marginBottom: '6px' }}>
+            <label style={{ display: 'block', fontSize: '13px', fontWeight: 600, color: '#24292f', marginBottom: '8px' }}>
               数据标签 (Data Labels)
             </label>
-            <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
-              <select
-                value={dataLabels}
-                onChange={(e) => setDataLabels(e.target.value as ChartVisualState['dataLabels'])}
-                style={{
-                  padding: '5px 10px',
-                  fontSize: '12.5px',
-                  border: '1px solid #d0d7de',
-                  borderRadius: '4px',
-                }}
-              >
-                <option value="none">无数据标签</option>
-                <option value="value">显示具体数值</option>
-                {isPie && <option value="percent">显示百分比</option>}
-                {isPie && <option value="category-percent">类别名称 + 百分比</option>}
-              </select>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <div style={{ display: 'flex', gap: '16px', alignItems: 'center', flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span style={{ fontSize: '12px', color: '#57606a' }}>内容：</span>
+                  <select
+                    value={dataLabels}
+                    onChange={(e) => setDataLabels(e.target.value as ChartVisualState['dataLabels'])}
+                    style={{
+                      padding: '5px 10px',
+                      fontSize: '12.5px',
+                      border: '1px solid #d0d7de',
+                      borderRadius: '4px',
+                    }}
+                  >
+                    <option value="none">无数据标签</option>
+                    <option value="value">显示具体数值 (Value)</option>
+                    {isPie && <option value="percent">显示百分比 (Percent)</option>}
+                    {isPie && <option value="category-percent">类别名称 + 百分比</option>}
+                    {isPie && <option value="category-value-percent">类别名称 + 数值 + 百分比</option>}
+                    <option value="category-value">类别名称 + 数值</option>
+                    <option value="series-value">系列名称 + 数值</option>
+                    {!isPie && <option value="percent">显示百分比 (Percent)</option>}
+                  </select>
+                </div>
+
+                {dataLabels !== 'none' && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span style={{ fontSize: '12px', color: '#57606a' }}>位置：</span>
+                    <select
+                      value={dataLabelPos}
+                      onChange={(e) => setDataLabelPos(e.target.value as ChartVisualState['dataLabelPosition'])}
+                      style={{
+                        padding: '5px 10px',
+                        fontSize: '12.5px',
+                        border: '1px solid #d0d7de',
+                        borderRadius: '4px',
+                      }}
+                    >
+                      <option value="outside-end">
+                        {isPie
+                          ? '外部居端 (带牵引线)'
+                          : isBar
+                            ? '外部居端 (条形右侧)'
+                            : isColumn
+                              ? '外部居端 (柱顶上方)'
+                              : '上方 / 外部居端'}
+                      </option>
+                      <option value="inside-end">
+                        {isBar
+                          ? '内部居端 (条形内靠右)'
+                          : isColumn
+                            ? '内部居端 (柱体内靠顶)'
+                            : isPie
+                              ? '内部居端 (靠外缘)'
+                              : '下方 / 内部居端'}
+                      </option>
+                      <option value="center">居中 (Center)</option>
+                      {(isBar || isColumn) && <option value="inside-base">轴底端 (Inside Base)</option>}
+                    </select>
+                  </div>
+                )}
+              </div>
 
               {dataLabels !== 'none' && (
-                <select
-                  value={dataLabelPos}
-                  onChange={(e) => setDataLabelPos(e.target.value as ChartVisualState['dataLabelPosition'])}
-                  style={{
-                    padding: '5px 10px',
-                    fontSize: '12.5px',
-                    border: '1px solid #d0d7de',
-                    borderRadius: '4px',
-                  }}
-                >
-                  <option value="outside-end">外部居端</option>
-                  <option value="inside-end">内部居端</option>
-                  <option value="center">居中</option>
-                </select>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: '12px', color: '#57606a' }}>数字格式：</span>
+                  <select
+                    value={dataLabelFormat}
+                    onChange={(e) => setDataLabelFormat(e.target.value)}
+                    style={{
+                      padding: '4px 8px',
+                      fontSize: '12px',
+                      border: '1px solid #d0d7de',
+                      borderRadius: '4px',
+                    }}
+                  >
+                    <option value="">自动 (常规)</option>
+                    <option value="0">整数 (0)</option>
+                    <option value="0.0">一位小数 (0.0)</option>
+                    <option value="0.00">两位小数 (0.00)</option>
+                    <option value="#,##0">千分位整数 (#,##0)</option>
+                    <option value="#,##0.00">千分位两位小数 (#,##0.00)</option>
+                    <option value="0%">百分比 (0%)</option>
+                    <option value="0.0%">百分比一位小数 (0.0%)</option>
+                  </select>
+                  <input
+                    type="text"
+                    value={dataLabelFormat}
+                    onChange={(e) => setDataLabelFormat(e.target.value)}
+                    placeholder="格式代码 (如 #,##0)"
+                    style={{
+                      width: '130px',
+                      padding: '4px 6px',
+                      fontSize: '12px',
+                      border: '1px solid #d0d7de',
+                      borderRadius: '4px',
+                    }}
+                  />
+                </div>
               )}
             </div>
           </div>

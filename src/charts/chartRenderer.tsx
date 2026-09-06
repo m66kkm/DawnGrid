@@ -7,6 +7,61 @@ import type { ChartVisualState } from './types';
 import { COLOR_PALETTES } from './types';
 import { formatCategoryLabel, valueAxisScale } from './chartVisual';
 
+function formatDataLabelValue(value: number, formatCode?: string): string {
+  if (formatCode && formatCode.trim() !== '') {
+    const code = formatCode.trim();
+    const decimals = /0\.(0+)/.exec(code)?.[1]?.length ?? 0;
+    if (code.includes('%')) {
+      return `${(value * 100).toFixed(decimals)}%`;
+    }
+    const fixed = value.toFixed(decimals);
+    if (code.includes(',')) {
+      const [whole, fraction] = fixed.split('.');
+      const grouped = Number(whole).toLocaleString('en-US');
+      return fraction !== undefined ? `${grouped}.${fraction}` : grouped;
+    }
+    return fixed;
+  }
+  if (Number.isInteger(value)) return String(value);
+  return Number(value.toFixed(2)).toString();
+}
+
+interface DataLabelContent {
+  main: string;
+  secondary?: string;
+}
+
+function getDataLabelText(
+  mode: ChartVisualState['dataLabels'],
+  val: number,
+  category: string,
+  seriesName: string,
+  total: number,
+  formatCode?: string,
+): DataLabelContent {
+  const formattedVal = formatDataLabelValue(val, formatCode);
+  const share = total > 0 ? Math.max(0, val) / total : 0;
+  const pct = formatCode && formatCode.includes('%')
+    ? formatDataLabelValue(share, formatCode)
+    : `${Math.round(share * 100)}%`;
+
+  switch (mode) {
+    case 'percent':
+      return { main: pct };
+    case 'category-percent':
+      return { main: category || '项目', secondary: pct };
+    case 'category-value-percent':
+      return { main: category || '项目', secondary: `${formattedVal} (${pct})` };
+    case 'category-value':
+      return { main: category ? `${category}: ${formattedVal}` : formattedVal };
+    case 'series-value':
+      return { main: seriesName ? `${seriesName}: ${formattedVal}` : formattedVal };
+    case 'value':
+    default:
+      return { main: formattedVal };
+  }
+}
+
 interface ChartRendererProps {
   chart: ChartVisualState;
   width: number;
@@ -395,15 +450,11 @@ export function ChartRenderer({ chart, width, height }: ChartRendererProps): Rea
                     const x2 = cx + radius * Math.cos(currentAngle);
                     const y2 = cy + radius * Math.sin(currentAngle);
                     const mid = from + sweep / 2;
-                    const labelDist = radius * 0.7;
-                    const labelX = cx + labelDist * Math.cos(mid);
-                    const labelY = cy + labelDist * Math.sin(mid);
                     const color =
                       primarySeries?.pointColors?.find((p) => p.index === i)?.color ??
                       defaultColors[i % defaultColors.length];
 
                     const d = `M${cx},${cy} L${x1.toFixed(1)},${y1.toFixed(1)} A${radius},${radius} 0 ${sweep > Math.PI ? 1 : 0} 1 ${x2.toFixed(1)},${y2.toFixed(1)} Z`;
-                    const pct = ((Math.max(v, 0) / total) * 100).toFixed(0);
 
                     return (
                       <g key={i}>
@@ -415,20 +466,89 @@ export function ChartRenderer({ chart, width, height }: ChartRendererProps): Rea
                           className="chart-pie-slice chart-elem-transition"
                           style={{ animationDelay: `${i * 45}ms` }}
                         />
-                        {showDataLabels && sweep > 0.15 && (
-                          <text
-                            x={labelX}
-                            y={labelY + 3}
-                            textAnchor="middle"
-                            fontSize="10"
-                            fontWeight="bold"
-                            fill="#ffffff"
-                            className="chart-data-label"
-                            style={{ animationDelay: `${i * 45 + 150}ms` }}
-                          >
-                            {pct}%
-                          </text>
-                        )}
+                        {showDataLabels && sweep > 0.08 && (() => {
+                          const pos = chart.dataLabelPosition ?? 'inside-end';
+                          const labelInfo = getDataLabelText(
+                            chart.dataLabels,
+                            v,
+                            categories[i] || `类别 ${i + 1}`,
+                            primarySeries?.name || '',
+                            total,
+                            chart.dataLabelFormat,
+                          );
+
+                          if (pos === 'outside-end') {
+                            const elbowDist = radius * 1.15;
+                            const elbowX = cx + elbowDist * Math.cos(mid);
+                            const elbowY = cy + elbowDist * Math.sin(mid);
+                            const isRight = Math.cos(mid) >= 0;
+                            const tick = 12;
+                            const textX = elbowX + (isRight ? tick : -tick);
+                            const textY = elbowY + 3;
+                            const sliceEdgeX = cx + (radius + 2) * Math.cos(mid);
+                            const sliceEdgeY = cy + (radius + 2) * Math.sin(mid);
+
+                            return (
+                              <g key={`pie-lbl-${i}`}>
+                                <polyline
+                                  points={`${sliceEdgeX.toFixed(1)},${sliceEdgeY.toFixed(1)} ${elbowX.toFixed(1)},${elbowY.toFixed(1)} ${textX.toFixed(1)},${elbowY.toFixed(1)}`}
+                                  fill="none"
+                                  stroke="#8c959f"
+                                  strokeWidth={1}
+                                  strokeDasharray="2,2"
+                                />
+                                <text
+                                  x={textX + (isRight ? 3 : -3)}
+                                  y={textY}
+                                  textAnchor={isRight ? 'start' : 'end'}
+                                  fontSize="10"
+                                  fontWeight="600"
+                                  fill="#24292f"
+                                  className="chart-data-label"
+                                  style={{ animationDelay: `${i * 45 + 150}ms` }}
+                                >
+                                  {labelInfo.secondary ? (
+                                    <>
+                                      <tspan x={textX + (isRight ? 3 : -3)} dy="-0.2em">{labelInfo.main}</tspan>
+                                      <tspan x={textX + (isRight ? 3 : -3)} dy="1.25em" fill="#57606a" fontSize="9">{labelInfo.secondary}</tspan>
+                                    </>
+                                  ) : (
+                                    labelInfo.main
+                                  )}
+                                </text>
+                              </g>
+                            );
+                          }
+
+                          const innerR = isDoughnut ? radius * ((chart.holeSizePct ?? 50) / 100) : 0;
+                          const dist = pos === 'center'
+                            ? (innerR > 0 ? (radius + innerR) / 2 : radius * 0.52)
+                            : (innerR > 0 ? (radius + innerR) / 2 + (radius - innerR) * 0.25 : radius * 0.76);
+                          const lx = cx + dist * Math.cos(mid);
+                          const ly = cy + dist * Math.sin(mid);
+
+                          return (
+                            <text
+                              x={lx}
+                              y={labelInfo.secondary ? ly - 2 : ly + 3.5}
+                              textAnchor="middle"
+                              fontSize="10"
+                              fontWeight="bold"
+                              fill="#ffffff"
+                              className="chart-data-label"
+                              style={{ animationDelay: `${i * 45 + 150}ms` }}
+                            >
+                              {labelInfo.secondary ? (
+                                <>
+                                  <tspan x={lx} dy="0">{labelInfo.main}</tspan>
+                                  <tspan x={lx} dy="1.2em">{labelInfo.secondary}</tspan>
+                                </>
+                              ) : (
+                                labelInfo.main
+                              )}
+                            </text>
+                          );
+                        })()}
                       </g>
                     );
                   })}
@@ -490,20 +610,47 @@ export function ChartRenderer({ chart, width, height }: ChartRendererProps): Rea
                             className="chart-col-bar chart-elem-transition"
                             style={{ animationDelay: `${i * 35 + sIndex * 20}ms` }}
                           />
-                          {showDataLabels && barH > 14 && (
-                            <text
-                              x={x + barWidth / 2}
-                              y={barY + barH / 2 + 3.5}
-                              textAnchor="middle"
-                              fontSize="9"
-                              fill="#ffffff"
-                              fontWeight="600"
-                              className="chart-data-label"
-                              style={{ animationDelay: `${i * 35 + sIndex * 20 + 120}ms` }}
-                            >
-                              {isPercentStacked ? `${Math.round((v / total) * 100)}%` : v}
-                            </text>
-                          )}
+                          {showDataLabels && barH > 10 && (() => {
+                            const pos = chart.dataLabelPosition ?? 'center';
+                            const labelInfo = getDataLabelText(
+                              chart.dataLabels,
+                              v,
+                              categories[i] ?? '',
+                              series.name,
+                              total,
+                              chart.dataLabelFormat,
+                            );
+                            let labelY = barY + barH / 2 + 3.5;
+                            let fill = '#ffffff';
+
+                            if (pos === 'inside-end' && barH >= 18) {
+                              labelY = barY + 12;
+                            } else if (pos === 'inside-base' && barH >= 18) {
+                              labelY = barY + barH - 4;
+                            } else if (pos === 'outside-end' && sIndex === chart.series.length - 1) {
+                              labelY = Math.max(paddingTop + 10, barY - 4);
+                              fill = '#24292f';
+                            }
+
+                            const displayText = isPercentStacked && (!chart.dataLabels || chart.dataLabels === 'none' || chart.dataLabels === 'percent')
+                              ? `${Math.round((v / total) * 100)}%`
+                              : labelInfo.main;
+
+                            return (
+                              <text
+                                x={x + barWidth / 2}
+                                y={labelY}
+                                textAnchor="middle"
+                                fontSize="9"
+                                fill={fill}
+                                fontWeight="600"
+                                className="chart-data-label"
+                                style={{ animationDelay: `${i * 35 + sIndex * 20 + 120}ms` }}
+                              >
+                                {displayText}
+                              </text>
+                            );
+                          })()}
                         </g>
                       );
                     })}
@@ -537,20 +684,60 @@ export function ChartRenderer({ chart, width, height }: ChartRendererProps): Rea
                         className="chart-col-bar chart-elem-transition"
                         style={{ animationDelay: `${i * 35 + sIndex * 20}ms` }}
                       />
-                      {showDataLabels && (
-                        <text
-                          x={x + barWidth / 2}
-                          y={Math.max(paddingTop + 10, y - 4)}
-                          textAnchor="middle"
-                          fontSize="9.5"
-                          fill="#333"
-                          fontWeight="500"
-                          className="chart-data-label"
-                          style={{ animationDelay: `${i * 35 + sIndex * 20 + 120}ms` }}
-                        >
-                          {v}
-                        </text>
-                      )}
+                      {showDataLabels && (() => {
+                        const pos = chart.dataLabelPosition ?? 'outside-end';
+                        const labelInfo = getDataLabelText(
+                          chart.dataLabels,
+                          v,
+                          categories[i] ?? '',
+                          series.name,
+                          0,
+                          chart.dataLabelFormat,
+                        );
+                        let labelY = Math.max(paddingTop + 10, y - 4);
+                        let fill = '#24292f';
+
+                        if (pos === 'inside-end') {
+                          if (barH >= 20) {
+                            labelY = y + 13;
+                            fill = '#ffffff';
+                          } else {
+                            labelY = Math.max(paddingTop + 10, y - 4);
+                            fill = '#24292f';
+                          }
+                        } else if (pos === 'center') {
+                          if (barH >= 16) {
+                            labelY = y + barH / 2 + 3.5;
+                            fill = '#ffffff';
+                          } else {
+                            labelY = Math.max(paddingTop + 10, y - 4);
+                            fill = '#24292f';
+                          }
+                        } else if (pos === 'inside-base') {
+                          if (barH >= 20) {
+                            labelY = y + barH - 6;
+                            fill = '#ffffff';
+                          } else {
+                            labelY = Math.max(paddingTop + 10, y - 4);
+                            fill = '#24292f';
+                          }
+                        }
+
+                        return (
+                          <text
+                            x={x + barWidth / 2}
+                            y={labelY}
+                            textAnchor="middle"
+                            fontSize="9.5"
+                            fill={fill}
+                            fontWeight="600"
+                            className="chart-data-label"
+                            style={{ animationDelay: `${i * 35 + sIndex * 20 + 120}ms` }}
+                          >
+                            {labelInfo.main}
+                          </text>
+                        );
+                      })()}
                     </g>
                   );
                 });
@@ -602,20 +789,51 @@ export function ChartRenderer({ chart, width, height }: ChartRendererProps): Rea
                             className="chart-horiz-bar chart-elem-transition"
                             style={{ animationDelay: `${i * 35 + sIndex * 20}ms` }}
                           />
-                          {showDataLabels && barW > 18 && (
-                            <text
-                              x={barX + barW / 2}
-                              y={y + barHeight / 2 + 3.5}
-                              textAnchor="middle"
-                              fontSize="9"
-                              fill="#ffffff"
-                              fontWeight="600"
-                              className="chart-data-label"
-                              style={{ animationDelay: `${i * 35 + sIndex * 20 + 120}ms` }}
-                            >
-                              {isPercentStacked ? `${Math.round((v / total) * 100)}%` : v}
-                            </text>
-                          )}
+                          {showDataLabels && barW > 14 && (() => {
+                            const pos = chart.dataLabelPosition ?? 'center';
+                            const labelInfo = getDataLabelText(
+                              chart.dataLabels,
+                              v,
+                              categories[i] ?? '',
+                              series.name,
+                              total,
+                              chart.dataLabelFormat,
+                            );
+                            let labelX = barX + barW / 2;
+                            let textAnchor: 'start' | 'middle' | 'end' = 'middle';
+                            let fill = '#ffffff';
+
+                            if (pos === 'inside-end' && barW >= 24) {
+                              labelX = barX + barW - 5;
+                              textAnchor = 'end';
+                            } else if (pos === 'inside-base' && barW >= 24) {
+                              labelX = barX + 5;
+                              textAnchor = 'start';
+                            } else if (pos === 'outside-end' && sIndex === chart.series.length - 1) {
+                              labelX = barX + barW + 5;
+                              textAnchor = 'start';
+                              fill = '#24292f';
+                            }
+
+                            const displayText = isPercentStacked && (!chart.dataLabels || chart.dataLabels === 'none' || chart.dataLabels === 'percent')
+                              ? `${Math.round((v / total) * 100)}%`
+                              : labelInfo.main;
+
+                            return (
+                              <text
+                                x={labelX}
+                                y={y + barHeight / 2 + 3.5}
+                                textAnchor={textAnchor}
+                                fontSize="9"
+                                fill={fill}
+                                fontWeight="600"
+                                className="chart-data-label"
+                                style={{ animationDelay: `${i * 35 + sIndex * 20 + 120}ms` }}
+                              >
+                                {displayText}
+                              </text>
+                            );
+                          })()}
                         </g>
                       );
                     })}
@@ -648,18 +866,66 @@ export function ChartRenderer({ chart, width, height }: ChartRendererProps): Rea
                         className="chart-horiz-bar chart-elem-transition"
                         style={{ animationDelay: `${i * 35 + sIndex * 20}ms` }}
                       />
-                      {showDataLabels && (
-                        <text
-                          x={paddingLeft + barW + 5}
-                          y={y + barHeight / 2 + 3}
-                          fontSize="9.5"
-                          fill="#333"
-                          className="chart-data-label"
-                          style={{ animationDelay: `${i * 35 + sIndex * 20 + 120}ms` }}
-                        >
-                          {v}
-                        </text>
-                      )}
+                      {showDataLabels && (() => {
+                        const pos = chart.dataLabelPosition ?? 'outside-end';
+                        const labelInfo = getDataLabelText(
+                          chart.dataLabels,
+                          v,
+                          categories[i] ?? '',
+                          series.name,
+                          0,
+                          chart.dataLabelFormat,
+                        );
+                        let labelX = paddingLeft + barW + 5;
+                        let textAnchor: 'start' | 'middle' | 'end' = 'start';
+                        let fill = '#24292f';
+
+                        if (pos === 'inside-end') {
+                          if (barW >= 24) {
+                            labelX = paddingLeft + barW - 6;
+                            textAnchor = 'end';
+                            fill = '#ffffff';
+                          } else {
+                            labelX = paddingLeft + barW + 5;
+                            textAnchor = 'start';
+                            fill = '#24292f';
+                          }
+                        } else if (pos === 'center') {
+                          if (barW >= 20) {
+                            labelX = paddingLeft + barW / 2;
+                            textAnchor = 'middle';
+                            fill = '#ffffff';
+                          } else {
+                            labelX = paddingLeft + barW + 5;
+                            textAnchor = 'start';
+                            fill = '#24292f';
+                          }
+                        } else if (pos === 'inside-base') {
+                          if (barW >= 20) {
+                            labelX = paddingLeft + 6;
+                            textAnchor = 'start';
+                            fill = '#ffffff';
+                          } else {
+                            labelX = paddingLeft + barW + 5;
+                            textAnchor = 'start';
+                            fill = '#24292f';
+                          }
+                        }
+
+                        return (
+                          <text
+                            x={labelX}
+                            y={y + barHeight / 2 + 3}
+                            textAnchor={textAnchor}
+                            fontSize="9.5"
+                            fill={fill}
+                            className="chart-data-label"
+                            style={{ animationDelay: `${i * 35 + sIndex * 20 + 120}ms` }}
+                          >
+                            {labelInfo.main}
+                          </text>
+                        );
+                      })()}
                     </g>
                   );
                 });
@@ -709,21 +975,33 @@ export function ChartRenderer({ chart, width, height }: ChartRendererProps): Rea
                     />
                   ))}
                   {showDataLabels &&
-                    points.map((pt, i) => (
-                      <text
-                        key={i}
-                        x={pt.x}
-                        y={pt.y - 7}
-                        textAnchor="middle"
-                        fontSize="9.5"
-                        fill={color}
-                        fontWeight="600"
-                        className="chart-data-label"
-                        style={{ animationDelay: `${i * 35 + 140}ms` }}
-                      >
-                        {pt.val}
-                      </text>
-                    ))}
+                    points.map((pt, i) => {
+                      const pos = chart.dataLabelPosition ?? 'outside-end';
+                      const labelInfo = getDataLabelText(
+                        chart.dataLabels,
+                        pt.val,
+                        categories[i] ?? '',
+                        series.name,
+                        0,
+                        chart.dataLabelFormat,
+                      );
+                      const labelY = pos === 'inside-end' ? pt.y + 14 : pos === 'center' ? pt.y + 3.5 : pt.y - 7;
+                      return (
+                        <text
+                          key={i}
+                          x={pt.x}
+                          y={labelY}
+                          textAnchor="middle"
+                          fontSize="9.5"
+                          fill={color}
+                          fontWeight="600"
+                          className="chart-data-label"
+                          style={{ animationDelay: `${i * 35 + 140}ms` }}
+                        >
+                          {labelInfo.main}
+                        </text>
+                      );
+                    })}
                 </g>
               );
             })}
@@ -761,21 +1039,38 @@ export function ChartRenderer({ chart, width, height }: ChartRendererProps): Rea
                     className="chart-line-path chart-elem-transition"
                   />
                   {showDataLabels &&
-                    points.map((pt, i) => (
-                      <text
-                        key={`area-lbl-${i}`}
-                        x={pt.x}
-                        y={Math.max(paddingTop + 10, pt.y - 6)}
-                        textAnchor="middle"
-                        fontSize="9.5"
-                        fill={color}
-                        fontWeight="600"
-                        className="chart-data-label"
-                        style={{ animationDelay: `${i * 35 + 140}ms` }}
-                      >
-                        {series.values[i]}
-                      </text>
-                    ))}
+                    points.map((pt, i) => {
+                      const pos = chart.dataLabelPosition ?? 'outside-end';
+                      const labelInfo = getDataLabelText(
+                        chart.dataLabels,
+                        series.values[i] ?? 0,
+                        categories[i] ?? '',
+                        series.name,
+                        0,
+                        chart.dataLabelFormat,
+                      );
+                      const labelY =
+                        pos === 'inside-end'
+                          ? paddingTop + plotHeight - 8
+                          : pos === 'center'
+                            ? (pt.y + paddingTop + plotHeight) / 2
+                            : Math.max(paddingTop + 10, pt.y - 6);
+                      return (
+                        <text
+                          key={`area-lbl-${i}`}
+                          x={pt.x}
+                          y={labelY}
+                          textAnchor="middle"
+                          fontSize="9.5"
+                          fill={color}
+                          fontWeight="600"
+                          className="chart-data-label"
+                          style={{ animationDelay: `${i * 35 + 140}ms` }}
+                        >
+                          {labelInfo.main}
+                        </text>
+                      );
+                    })}
                 </g>
               );
             })}
@@ -802,20 +1097,32 @@ export function ChartRenderer({ chart, width, height }: ChartRendererProps): Rea
                       className="chart-point-dot chart-elem-transition"
                       style={{ animationDelay: `${i * 25}ms` }}
                     />
-                    {showDataLabels && (
-                      <text
-                        x={x}
-                        y={y - 7}
-                        textAnchor="middle"
-                        fontSize="9"
-                        fill={color}
-                        fontWeight="500"
-                        className="chart-data-label"
-                        style={{ animationDelay: `${i * 25 + 120}ms` }}
-                      >
-                        {v}
-                      </text>
-                    )}
+                    {showDataLabels && (() => {
+                      const pos = chart.dataLabelPosition ?? 'outside-end';
+                      const labelInfo = getDataLabelText(
+                        chart.dataLabels,
+                        v,
+                        categories[i] ?? '',
+                        series.name,
+                        0,
+                        chart.dataLabelFormat,
+                      );
+                      const labelY = pos === 'inside-end' ? y + 14 : pos === 'center' ? y + 3.5 : y - 7;
+                      return (
+                        <text
+                          x={x}
+                          y={labelY}
+                          textAnchor="middle"
+                          fontSize="9"
+                          fill={color}
+                          fontWeight="500"
+                          className="chart-data-label"
+                          style={{ animationDelay: `${i * 25 + 120}ms` }}
+                        >
+                          {labelInfo.main}
+                        </text>
+                      );
+                    })()}
                   </g>
                 );
               });
@@ -863,6 +1170,37 @@ export function ChartRenderer({ chart, width, height }: ChartRendererProps): Rea
                           className="chart-radar-poly chart-elem-transition"
                           style={{ transformOrigin: `${cx}px ${cy}px` }}
                         />
+                        {showDataLabels &&
+                          series.values.map((v, i) => {
+                            const angle = -Math.PI / 2 + (i / count) * Math.PI * 2;
+                            const fraction = Math.min(1, Math.max(0, v / scale.max));
+                            const pos = chart.dataLabelPosition ?? 'outside-end';
+                            const offsetR = pos === 'inside-end' ? -12 : pos === 'center' ? -4 : 10;
+                            const lx = cx + (radius * fraction + offsetR) * Math.cos(angle);
+                            const ly = cy + (radius * fraction + offsetR) * Math.sin(angle);
+                            const labelInfo = getDataLabelText(
+                              chart.dataLabels,
+                              v,
+                              categories[i] ?? '',
+                              series.name,
+                              0,
+                              chart.dataLabelFormat,
+                            );
+                            return (
+                              <text
+                                key={`radar-lbl-${sIndex}-${i}`}
+                                x={lx}
+                                y={ly + 3}
+                                textAnchor="middle"
+                                fontSize="8.5"
+                                fill={color}
+                                fontWeight="600"
+                                className="chart-data-label"
+                              >
+                                {labelInfo.main}
+                              </text>
+                            );
+                          })}
                       </g>
                     );
                   })}

@@ -74,8 +74,8 @@ export interface ChartVisualState {
   series: ChartSeriesVisualState[];
   legend?: 'none' | 'right' | 'bottom' | 'top' | 'left' | undefined;
   axisTitles?: { category?: string | null | undefined; value?: string | null | undefined } | undefined;
-  dataLabels?: 'none' | 'value' | 'percent' | 'category-percent' | 'category-value-percent' | undefined;
-  dataLabelPosition?: 'center' | 'inside-end' | 'outside-end' | undefined;
+  dataLabels?: 'none' | 'value' | 'percent' | 'category-value' | 'series-value' | 'category-percent' | 'category-value-percent' | undefined;
+  dataLabelPosition?: 'center' | 'inside-end' | 'outside-end' | 'inside-base' | undefined;
   dataLabelFormat?: string | undefined;
   grouping?: 'clustered' | 'stacked' | 'percentStacked' | 'standard' | undefined;
   gridlines?: boolean | undefined;
