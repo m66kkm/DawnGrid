@@ -6,23 +6,27 @@ import { ChartRenderer } from './chartRenderer';
 interface ChartOverlayProps {
   charts: SheetVisual[];
   activeChartId: string | null;
+  scrollOffset?: { x: number; y: number };
   onSelectChart: (id: string | null) => void;
   onUpdateChartPos: (id: string, pos: SheetVisual['pos']) => void;
   onOpenSelectData: (chart: SheetVisual) => void;
   onOpenFormatPane: (chart: SheetVisual) => void;
   onSwitchRowCol: (chart: SheetVisual) => void;
   onDeleteChart: (id: string) => void;
+  onScrollSheet?: (deltaX: number, deltaY: number) => void;
 }
 
 export function ChartOverlay({
   charts,
   activeChartId,
+  scrollOffset = { x: 0, y: 0 },
   onSelectChart,
   onUpdateChartPos,
   onOpenSelectData,
   onOpenFormatPane,
   onSwitchRowCol,
   onDeleteChart,
+  onScrollSheet,
 }: ChartOverlayProps): React.JSX.Element {
   const [dragState, setDragState] = useState<{
     id: string;
@@ -106,6 +110,62 @@ export function ChartOverlay({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [activeChartId, onDeleteChart, onSelectChart]);
 
+  // Deselect active chart when clicking on table cells or anywhere outside charts
+  useEffect(() => {
+    if (!activeChartId) return;
+
+    const handlePointerDown = (e: PointerEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+
+      // Click inside any chart card or its controls -> do not deselect
+      if (target.closest('[data-chart-id]')) {
+        return;
+      }
+
+      // Click inside chart dialogs, format panes, or popups -> do not deselect
+      if (
+        target.closest(
+          '.dialog-backdrop, .modal-backdrop, .modal-window, [role="dialog"], [role="listbox"], .menu-select-drop, .chart-format-pane, .chart-select-data-dialog'
+        )
+      ) {
+        return;
+      }
+
+      // Click inside ribbon toolbar buttons / header -> do not deselect
+      if (target.closest('.excel-header, .ribbon-tabs, .ribbon-container, header, nav')) {
+        return;
+      }
+
+      // Any click on the sheet canvas, cells, headers, or grid deselects the active chart
+      onSelectChart(null);
+    };
+
+    window.addEventListener('pointerdown', handlePointerDown, true);
+    return () => window.removeEventListener('pointerdown', handlePointerDown, true);
+  }, [activeChartId, onSelectChart]);
+
+  // Forward wheel events over any chart card to scroll the worksheet smoothly
+  useEffect(() => {
+    if (!onScrollSheet) return;
+
+    const handleWheel = (e: WheelEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (!target?.closest('[data-chart-id]')) return;
+
+      // Prevent outer page default scrolling
+      e.preventDefault();
+
+      const deltaX = e.shiftKey ? e.deltaY || e.deltaX : e.deltaX;
+      const deltaY = e.shiftKey ? 0 : e.deltaY;
+
+      onScrollSheet(deltaX, deltaY);
+    };
+
+    window.addEventListener('wheel', handleWheel, { passive: false });
+    return () => window.removeEventListener('wheel', handleWheel);
+  }, [onScrollSheet]);
+
   return (
     <div
       ref={containerRef}
@@ -123,17 +183,20 @@ export function ChartOverlay({
         bottom: 0,
         pointerEvents: 'none',
         zIndex: 20,
-        overflow: 'visible',
+        overflow: 'hidden',
       }}
     >
       <AnimatePresence>
         {charts.map((chartItem) => {
           const isActive = chartItem.id === activeChartId;
           const { x, y, width, height } = chartItem.pos;
+          const renderX = x - scrollOffset.x;
+          const renderY = y - scrollOffset.y;
 
           return (
             <motion.div
               key={chartItem.id}
+              data-chart-id={chartItem.id}
               layout="position"
               transition={
                 dragState?.id === chartItem.id
@@ -144,9 +207,18 @@ export function ChartOverlay({
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.92, transition: { duration: 0.18 } }}
               whileHover={!dragState ? { y: -1 } : undefined}
+              whileTap={{ scale: 0.995 }}
               onMouseDown={(e) => {
+                if (e.button !== 0) return;
                 e.stopPropagation();
                 onSelectChart(chartItem.id);
+                setDragState({
+                  id: chartItem.id,
+                  mode: 'move',
+                  startX: e.clientX,
+                  startY: e.clientY,
+                  origPos: chartItem.pos,
+                });
               }}
               onClick={(e) => {
                 e.stopPropagation();
@@ -158,8 +230,8 @@ export function ChartOverlay({
               }}
               style={{
                 position: 'absolute',
-                left: x,
-                top: y,
+                left: renderX,
+                top: renderY,
                 width,
                 height,
                 pointerEvents: 'auto',
@@ -169,30 +241,19 @@ export function ChartOverlay({
                   : '0 4px 14px rgba(0, 0, 0, 0.08)',
                 borderRadius: '6px',
                 background: '#ffffff',
-                cursor: isActive ? 'default' : 'pointer',
+                cursor: dragState?.id === chartItem.id ? 'grabbing' : (isActive ? 'move' : 'pointer'),
+                userSelect: 'none',
                 transition: dragState?.id === chartItem.id ? 'none' : 'box-shadow 0.15s ease',
               }}
             >
-              {/* Move Drag Bar */}
+              {/* Move Drag Bar Indicator */}
               <div
-                onMouseDown={(e) => {
-                  e.stopPropagation();
-                  onSelectChart(chartItem.id);
-                  setDragState({
-                    id: chartItem.id,
-                    mode: 'move',
-                    startX: e.clientX,
-                    startY: e.clientY,
-                    origPos: chartItem.pos,
-                  });
-                }}
                 style={{
                   position: 'absolute',
                   top: 0,
                   left: 0,
                   right: 0,
                   height: '24px',
-                  cursor: 'grab',
                   zIndex: 10,
                   display: 'flex',
                   alignItems: 'center',
@@ -200,13 +261,14 @@ export function ChartOverlay({
                   padding: '0 8px',
                   background: isActive ? 'rgba(33, 115, 70, 0.08)' : 'transparent',
                   borderRadius: '5px 5px 0 0',
+                  pointerEvents: 'none',
                 }}
-                title="按住拖拽移动图表位置"
+                title="拖拽移动图表位置"
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                   {isActive && (
                     <span style={{ fontSize: '10px', color: '#217346', fontWeight: 600 }}>
-                      ⠿ 移动图表
+                      ⠿ 拖拽移动图表
                     </span>
                   )}
                 </div>
@@ -305,7 +367,7 @@ export function ChartOverlay({
               </AnimatePresence>
 
               {/* Chart SVG Rendering */}
-              <div style={{ width: '100%', height: '100%', overflow: 'hidden' }}>
+              <div style={{ width: '100%', height: '100%', overflow: 'hidden', userSelect: 'none' }}>
                 <ChartRenderer chart={chartItem.chart} width={width} height={height} />
               </div>
 

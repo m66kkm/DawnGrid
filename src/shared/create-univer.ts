@@ -1,6 +1,19 @@
 import { LogLevel, Univer } from '@univerjs/core'
 import type { DependencyOverride, IUniverConfig, Plugin, PluginCtor } from '@univerjs/core'
 import { FUniver } from '@univerjs/core/lib/facade'
+import { Scene } from '@univerjs/engine-render'
+
+// Fix: Disable Univer's buggy bit-blitting canvas scroll fast path.
+// In Univer 1.0.0-beta.2, makeDirtyForScrolling enables `_preserveEngineOnRender`,
+// which uses `ctx.drawImage` to copy and shift canvas pixels. This inadvertently samples
+// the 1px header selection border bleed and stamps ghost blue lines across the sheet
+// on every scroll-up wheel tick. Redirecting to standard `makeDirty(true)` ensures a clean
+// canvas clear and repaint on every scroll frame at 60fps without ghost lines.
+if (typeof Scene !== 'undefined' && Scene.prototype) {
+  (Scene.prototype as any).makeDirtyForScrolling = function () {
+    return this.makeDirty(true)
+  }
+}
 
 type PluginEntry = PluginCtor<Plugin> | [PluginCtor<Plugin>, ConstructorParameters<PluginCtor<Plugin>>[0]]
 

@@ -68,21 +68,24 @@ async function queryFamilies(): Promise<readonly string[]> {
     console.warn("invoke get_system_fonts failed:", e);
   }
 
-  // 2. Try window.queryLocalFonts (Local Font Access API in Chromium/WebView2)
-  const query = (window as { queryLocalFonts?: () => Promise<{ readonly family: string }[]> }).queryLocalFonts;
-  if (query) {
-    try {
-      const fonts = await query.call(window);
-      for (const font of fonts) {
-        if (font.family) {
-          const mapped = FONT_LOCAL_NAMES[font.family] || font.family;
-          if (!DEFAULT_FONT_FAMILIES.includes(mapped) && !DEFAULT_FONT_FAMILIES.includes(font.family)) {
-            families.add(mapped);
+  // 2. Try window.queryLocalFonts only as fallback (e.g. pure web environment)
+  // to avoid triggering the Chromium permission prompt in desktop app
+  if (families.size === 0) {
+    const query = (window as { queryLocalFonts?: () => Promise<{ readonly family: string }[]> }).queryLocalFonts;
+    if (query) {
+      try {
+        const fonts = await query.call(window);
+        for (const font of fonts) {
+          if (font.family) {
+            const mapped = FONT_LOCAL_NAMES[font.family] || font.family;
+            if (!DEFAULT_FONT_FAMILIES.includes(mapped) && !DEFAULT_FONT_FAMILIES.includes(font.family)) {
+              families.add(mapped);
+            }
           }
         }
+      } catch {
+        // ignore
       }
-    } catch {
-      // ignore
     }
   }
 

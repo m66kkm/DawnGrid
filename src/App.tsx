@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { LocaleType, mergeLocales } from "@univerjs/core";
+import { IRenderManagerService } from "@univerjs/engine-render";
 import "@univerjs/sheets/facade";
 import { UniverSheetsCorePreset } from "@univerjs/preset-sheets-core";
 import UniverPresetSheetsCoreEnUS from "@univerjs/preset-sheets-core/locales/en-US";
@@ -175,6 +176,52 @@ export default function App() {
   const activeSheetId = useDocumentStore((s) => s.activeSheetId);
   const workbookSubRef = useRef<any>(null);
 
+  // Synchronized sheet viewport scroll offset so charts and drawings scroll naturally with grid
+  const [sheetScroll, setSheetScroll] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+
+  const syncViewportScroll = useCallback(() => {
+    try {
+      const runtime = univerRef.current;
+      if (!runtime) return;
+      const activeWb = runtime.univerAPI.getActiveWorkbook();
+      if (!activeWb) return;
+      const unitId = activeWb.getId?.() || (activeWb as any).getUnitId?.();
+      const injector = (runtime.univer as any).__getInjector?.();
+      if (injector && unitId) {
+        const renderManager = injector.get(IRenderManagerService);
+        const renderUnit = renderManager?.getRenderById(unitId);
+        const scene = renderUnit?.scene;
+        if (scene && typeof scene.makeDirtyForScrolling === "function") {
+          scene.makeDirtyForScrolling = function () {
+            return this.makeDirty(true);
+          };
+        }
+        const viewMain = scene?.getViewport("viewMain");
+        if (viewMain) {
+          const sx = Math.round(viewMain.viewportScrollX ?? 0);
+          const sy = Math.round(viewMain.viewportScrollY ?? 0);
+          setSheetScroll((prev) => (prev.x === sx && prev.y === sy ? prev : { x: sx, y: sy }));
+        }
+      }
+    } catch {}
+  }, []);
+
+  const handleScrollSheet = useCallback((deltaX: number, deltaY: number) => {
+    const runtime = univerRef.current;
+    if (!runtime?.univerAPI) return;
+    try {
+      void (runtime.univerAPI as any).executeCommand?.(
+        "sheet.command.set-scroll-relative",
+        {
+          offsetX: deltaX,
+          offsetY: deltaY,
+        }
+      );
+    } catch (err) {
+      console.warn("Scroll sheet relative failed:", err);
+    }
+  }, []);
+
   const handleActiveSheetSwitch = useCallback((sheetId: string) => {
     if (!sheetId) return;
     if (useDocumentStore.getState().activeSheetId !== sheetId) {
@@ -186,6 +233,7 @@ export default function App() {
       setActiveChartId(null);
       setSelectedChart(false);
     }
+    setTimeout(syncViewportScroll, 30);
     // Lazy-load sheet data if opening an existing file with multiple sheets
     if (currentMetaRef.current) {
       const targetSheet = currentMetaRef.current.sheets.find(
@@ -421,8 +469,8 @@ export default function App() {
         title: customTitle,
         values: data.values,
         initialPos: {
-          x: 100 + (visibleCharts.length % 5) * 25,
-          y: 60 + (visibleCharts.length % 5) * 25,
+          x: 100 + sheetScroll.x + (visibleCharts.length % 5) * 25,
+          y: 60 + sheetScroll.y + (visibleCharts.length % 5) * 25,
           width: 520,
           height: 340,
         },
@@ -448,8 +496,9 @@ export default function App() {
   }
 
   function getTargetChart(autoCreateKind?: RecommendedKind): SheetVisual | null {
-    if (activeChartId) {
-      const found = visibleCharts.find((c) => c.id === activeChartId);
+    const currentActiveId = activeChartId || useChartStore.getState().activeChartId;
+    if (currentActiveId) {
+      const found = visibleCharts.find((c) => c.id === currentActiveId);
       if (found) return found;
     }
     if (visibleCharts.length > 0) {
@@ -585,12 +634,66 @@ export default function App() {
       }
     );
 
+    // Listen to scroll events on Univer
+    const subScroll = (runtime.univerAPI as any).addEvent?.(
+      (runtime.univerAPI as any).Event?.Scroll || "Scroll",
+      (params: any) => {
+        if (!params) return;
+        const sx = Math.round(params.viewportScrollX ?? params.scrollX ?? 0);
+        const sy = Math.round(params.viewportScrollY ?? params.scrollY ?? 0);
+        setSheetScroll((prev) => (prev.x === sx && prev.y === sy ? prev : { x: sx, y: sy }));
+      }
+    );
+
+    // Direct viewport hook for 60fps synchronous frame updates and rendering fixes
+    const attachViewportScrollListener = () => {
+      try {
+        const activeWb = runtime.univerAPI.getActiveWorkbook();
+        const unitId = activeWb?.getId?.() || (activeWb as any)?.getUnitId?.();
+        const injector = (runtime.univer as any).__getInjector?.();
+        if (injector && unitId) {
+          const renderManager = injector.get(IRenderManagerService);
+          const renderUnit = renderManager?.getRenderById(unitId);
+          const scene = renderUnit?.scene;
+
+          // Prevent Univer's canvas bit-blitting fast path from copying the 1px header
+          // selection border bleed down into the table as ghost blue lines during scroll up.
+          if (scene && typeof scene.makeDirtyForScrolling === "function") {
+            scene.makeDirtyForScrolling = function () {
+              return this.makeDirty(true);
+            };
+          }
+
+          const viewMain = scene?.getViewport("viewMain");
+          if (viewMain?.onScrollAfter$) {
+            return viewMain.onScrollAfter$.subscribeEvent?.((param: any) => {
+              const sx = Math.round(param?.viewportScrollX ?? viewMain.viewportScrollX ?? 0);
+              const sy = Math.round(param?.viewportScrollY ?? viewMain.viewportScrollY ?? 0);
+              setSheetScroll((prev) => (prev.x === sx && prev.y === sy ? prev : { x: sx, y: sy }));
+            });
+          }
+        }
+      } catch {}
+      return null;
+    };
+
+    let scrollSub: any = null;
+    setTimeout(() => {
+      scrollSub = attachViewportScrollListener();
+      syncViewportScroll();
+    }, 100);
+
     const subSheet = (runtime.univerAPI as any).addEvent?.(
       (runtime.univerAPI as any).Event?.ActiveSheetChanged,
       (params: any) => {
         const sheetId = params?.activeSheet?.getSheetId?.() || params?.subUnitId;
         if (sheetId) {
           handleActiveSheetSwitchRef.current(sheetId);
+          setTimeout(() => {
+            scrollSub?.dispose?.();
+            scrollSub = attachViewportScrollListener();
+            syncViewportScroll();
+          }, 50);
         }
       }
     );
@@ -629,6 +732,16 @@ export default function App() {
 
     const subCommand = (runtime.univerAPI as any).onCommandExecuted?.((command: any) => {
       scheduleSelectionSync();
+
+      // Sync viewport scroll offset for charts
+      if (
+        command?.id === "sheet.operation.set-scroll" ||
+        command?.id === "sheet.command.set-scroll-relative" ||
+        command?.id === "sheet.command.scroll-view" ||
+        command?.id === "sheet.command.scroll-view-reset"
+      ) {
+        syncViewportScroll();
+      }
 
       // Clear chart selection when user changes worksheet selection / edits cells
       if (
@@ -806,6 +919,8 @@ export default function App() {
       }
       subWbCreated?.dispose?.();
       subSelection?.dispose?.();
+      subScroll?.dispose?.();
+      scrollSub?.dispose?.();
       subSheet?.dispose?.();
       subSheetDeleted?.dispose?.();
       subCommand?.dispose?.();
@@ -885,6 +1000,7 @@ export default function App() {
       setCharts(loadedCharts);
       setActiveChartId(null);
       setSelectedChart(false);
+      setSheetScroll({ x: 0, y: 0 });
 
       // 2. Load Workbook skeleton
       loadWorkbookSkeleton(runtime, meta);
@@ -1115,6 +1231,7 @@ export default function App() {
     setCharts([]);
     setActiveChartId(null);
     setSelectedChart(false);
+    setSheetScroll({ x: 0, y: 0 });
     setActiveSheetId("sheet-1");
     useDocumentStore.getState().setActiveSheetId("sheet-1");
     attachWorkbookSheetListener(runtime.univerAPI.getActiveWorkbook());
@@ -1634,6 +1751,8 @@ export default function App() {
         <ChartOverlay
           charts={visibleCharts}
           activeChartId={activeChartId}
+          scrollOffset={sheetScroll}
+          onScrollSheet={handleScrollSheet}
           onSelectChart={(id) => {
             setActiveChartId(id);
             setSelectedChart(Boolean(id));
@@ -1816,9 +1935,9 @@ export default function App() {
       <ChartSelectDataDialog
         isOpen={activeDialog === "chart-select-data"}
         onClose={() => closeDialogIf("chart-select-data")}
-        chart={visibleCharts.find((c) => c.id === activeChartId)?.chart ?? visibleCharts[visibleCharts.length - 1]?.chart ?? null}
+        chart={visibleCharts.find((c) => c.id === (activeChartId || useChartStore.getState().activeChartId))?.chart ?? visibleCharts[visibleCharts.length - 1]?.chart ?? null}
         onApply={(edit) => {
-          const targetId = activeChartId || visibleCharts[visibleCharts.length - 1]?.id;
+          const targetId = activeChartId || useChartStore.getState().activeChartId || visibleCharts[visibleCharts.length - 1]?.id;
           if (targetId) {
             setCharts((prev) =>
               prev.map((c) =>
@@ -1834,9 +1953,9 @@ export default function App() {
       <ChartFormatDialog
         isOpen={activeDialog === "chart-format"}
         onClose={() => closeDialogIf("chart-format")}
-        chart={visibleCharts.find((c) => c.id === activeChartId)?.chart ?? visibleCharts[visibleCharts.length - 1]?.chart ?? null}
+        chart={visibleCharts.find((c) => c.id === (activeChartId || useChartStore.getState().activeChartId))?.chart ?? visibleCharts[visibleCharts.length - 1]?.chart ?? null}
         onApply={(edit) => {
-          const targetId = activeChartId || visibleCharts[visibleCharts.length - 1]?.id;
+          const targetId = activeChartId || useChartStore.getState().activeChartId || visibleCharts[visibleCharts.length - 1]?.id;
           if (targetId) {
             setCharts((prev) =>
               prev.map((c) =>
