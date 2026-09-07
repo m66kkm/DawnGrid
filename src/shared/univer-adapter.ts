@@ -7,7 +7,7 @@ import {
 } from '@univerjs/core'
 import type { UniverRuntime } from './create-univer'
 import type { RangeResult, SheetMetadata, WorkbookMetadata } from './types'
-import { COLOR_PALETTES } from './charts/types'
+import { COLOR_PALETTES } from '../charts/types'
 
 export async function openWorkbookFile(path: string): Promise<WorkbookMetadata> {
   return await invoke<WorkbookMetadata>('open_workbook', { path })

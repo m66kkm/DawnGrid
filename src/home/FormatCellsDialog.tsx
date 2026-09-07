@@ -1,6 +1,6 @@
 import { useState } from "react";
-import type { SelectionFormat } from "./selection-format";
-import { fontFamilyGroups, useSystemFontFamilies } from "./system-fonts";
+import type { SelectionFormat } from "../shared/selection-format";
+import { fontFamilyGroups, useSystemFontFamilies } from "../shared/system-fonts";
 
 interface FormatCellsDialogProps {
   isOpen: boolean;

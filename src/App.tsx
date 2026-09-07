@@ -23,26 +23,26 @@ import { UniverSheetsSortPreset } from "@univerjs/preset-sheets-sort";
 import UniverPresetSheetsSortZhCN from "@univerjs/preset-sheets-sort/locales/zh-CN";
 import { UniverSheetsTablePreset, UniverSheetsTableUIPlugin } from "@univerjs/preset-sheets-table";
 import UniverPresetSheetsTableZhCN from "@univerjs/preset-sheets-table/locales/zh-CN";
-import { createUniver } from "./create-univer";
+import { createUniver } from "./shared/create-univer";
 import {
   loadWorkbookSkeleton,
   loadWorksheetData,
   openWorkbookFile,
   saveWorkbookToDisk,
-} from "./univer-adapter";
-import type { SheetMetadata, WorkbookMetadata } from "./types";
+} from "./shared/univer-adapter";
+import type { SheetMetadata, WorkbookMetadata } from "./shared/types";
 import { Ribbon } from "./Ribbon";
-import { FormatCellsDialog } from "./FormatCellsDialog";
-import { InsertFunctionDialog } from "./InsertFunctionDialog";
-import { AiAssistantModal } from "./AiAssistantModal";
-import { GoToDialog } from "./GoToDialog";
-import { PivotDialog, type PivotConfig, type PivotField } from "./PivotDialog";
-import { GoalSeekDialog } from "./GoalSeekDialog";
-import { SubtotalDialog } from "./SubtotalDialog";
-import { ConsolidateDialog } from "./ConsolidateDialog";
-import { AdvancedFilterDialog } from "./AdvancedFilterDialog";
-import { CustomSortDialog } from "./CustomSortDialog";
-import { NameManagerDialog } from "./NameManagerDialog";
+import { FormatCellsDialog } from "./home/FormatCellsDialog";
+import { InsertFunctionDialog } from "./formular/InsertFunctionDialog";
+import { AiAssistantModal } from "./shared/AiAssistantModal";
+import { GoToDialog } from "./home/GoToDialog";
+import { PivotDialog, type PivotConfig, type PivotField } from "./insert/PivotDialog";
+import { GoalSeekDialog } from "./data/GoalSeekDialog";
+import { SubtotalDialog } from "./data/SubtotalDialog";
+import { ConsolidateDialog } from "./data/ConsolidateDialog";
+import { AdvancedFilterDialog } from "./data/AdvancedFilterDialog";
+import { CustomSortDialog } from "./data/CustomSortDialog";
+import { NameManagerDialog } from "./formular/NameManagerDialog";
 import {
   type DefinedNameRow,
   type WatchCellItem,
@@ -57,10 +57,10 @@ import {
   calculateSheet,
   WatchWindowDialog,
 } from "./formular";
-import { SymbolDialog } from "./SymbolDialog";
-import { HeaderFooterDialog, type HeaderFooterData } from "./HeaderFooterDialog";
-import { AllowEditRangesDialog, type AllowEditRangeItem } from "./AllowEditRangesDialog";
-import { WorkbookStatsModal } from "./WorkbookStatsModal";
+import { SymbolDialog } from "./insert/SymbolDialog";
+import { HeaderFooterDialog, type HeaderFooterData } from "./insert/HeaderFooterDialog";
+import { AllowEditRangesDialog, type AllowEditRangeItem } from "./review/AllowEditRangesDialog";
+import { WorkbookStatsModal } from "./shared/WorkbookStatsModal";
 import {
   RecommendedChartsDialog,
   ChartSelectDataDialog,
@@ -78,7 +78,7 @@ import {
   type ChartStateEdit,
   type ChartVisualState,
 } from "./charts";
-import { type SelectionFormat, isSameSelectionFormat, toSelectionFormat } from "./selection-format";
+import { type SelectionFormat, isSameSelectionFormat, toSelectionFormat } from "./shared/selection-format";
 import "./App.css";
 
 function getColumnName(colIndex: number): string {

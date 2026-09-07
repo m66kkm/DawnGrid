@@ -5,3 +5,6 @@ export * from "./definedNames";
 export * from "./formulaAudit";
 export * from "./calculation";
 export * from "./WatchWindowDialog";
+export * from "./InsertFunctionDialog";
+export { NameManagerDialog } from "./NameManagerDialog";
+

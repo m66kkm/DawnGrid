@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { PivotField } from "./PivotDialog";
+import type { PivotField } from "../insert/PivotDialog";
 
 interface AdvancedFilterDialogProps {
   isOpen: boolean;

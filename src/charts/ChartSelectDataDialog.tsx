@@ -4,7 +4,7 @@
 import React, { useState } from 'react';
 import type { ChartStateEdit, ChartVisualState } from './types';
 import { transposeChartSeries } from './chartVisual';
-import { useCssTransitionMount } from './useCssTransitionMount';
+import { useCssTransitionMount } from '../shared/useCssTransitionMount';
 
 interface ChartSelectDataDialogProps {
   isOpen: boolean;

@@ -4,7 +4,7 @@
 import React, { useState } from 'react';
 import type { ChartStateEdit, ChartVisualState } from './types';
 import { COLOR_PALETTES } from './types';
-import { useCssTransitionMount } from './useCssTransitionMount';
+import { useCssTransitionMount } from '../shared/useCssTransitionMount';
 
 interface ChartFormatDialogProps {
   isOpen: boolean;

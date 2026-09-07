@@ -5,7 +5,7 @@
 
 import React from 'react';
 import type { ChartRecommendations, RecommendedKind, RecommendReason } from './types';
-import { useCssTransitionMount } from './useCssTransitionMount';
+import { useCssTransitionMount } from '../shared/useCssTransitionMount';
 
 const PALETTE = ['#4472c4', '#ed7d31', '#a5a5a5', '#ffc000', '#5b9bd5', '#70ad47'];
 const W = 180;

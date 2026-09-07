@@ -1,11 +1,10 @@
 import { useState, useMemo, useEffect, useRef } from "react";
-
+import type { FunctionSpec } from "./types";
 import {
-  FunctionSpec,
   FUNCTION_CATALOG,
   CATEGORIES,
   normalizeCategory,
-} from "./formular";
+} from "./catalog";
 
 export interface InsertFunctionDialogProps {
   readonly isOpen: boolean;

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { SelectionFormat } from "./selection-format";
+import type { SelectionFormat } from "./shared/selection-format";
 import {
   CaretIcon,
   RedoIcon,
@@ -7,9 +7,9 @@ import {
   SaveIcon,
   ToolSymbol,
   UndoIcon,
-} from "./ribbon-icons";
-import { MenuSelect, EditableMenuSelect } from "./MenuSelect";
-import { fontFamilyGroups, useSystemFontFamilies } from "./system-fonts";
+} from "./shared/ribbon-icons";
+import { MenuSelect, EditableMenuSelect } from "./shared/MenuSelect";
+import { fontFamilyGroups, useSystemFontFamilies } from "./shared/system-fonts";
 
 export interface RibbonProps {
   onCommand: (command: string, ...args: any[]) => void;
