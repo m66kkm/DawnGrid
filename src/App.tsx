@@ -45,14 +45,7 @@ import { NameManagerDialog } from "./formular/NameManagerDialog";
 import {
   type WatchCellItem,
   applyAutoSum,
-  createNamesFromSelection,
   insertDefinedNameIntoFormula,
-  tracePrecedents,
-  traceDependents,
-  clearAuditHighlights,
-  checkFormulaErrors,
-  calculateNow,
-  calculateSheet,
   WatchWindowDialog,
 } from "./formular";
 import { SymbolDialog } from "./insert/SymbolDialog";
@@ -83,12 +76,12 @@ import {
   useDocumentStore,
   useNotificationStore,
   useSelectionStore,
-  useViewStore,
   type DialogId,
 } from "./store";
 import { RibbonContainer } from "./layout";
 import { usePageLayoutCommands, useViewCommands } from "./view";
 import { useReviewCommands } from "./review";
+import { useFormulaCommands } from "./formular/useFormulaCommands";
 import { useAiCommands } from "./shared/useAiCommands";
 import { NotificationDialog } from "./shared/NotificationDialog";
 import { useStableCallback } from "./shared/useStableCallback";
@@ -213,7 +206,8 @@ export default function App() {
   const setIsChartSelectDataOpen = useMemo(() => dialogSetter("chart-select-data"), [dialogSetter]);
   const setIsChartFormatOpen = useMemo(() => dialogSetter("chart-format"), [dialogSetter]);
 
-  const [insertFuncCategory, setInsertFuncCategory] = useState<string>("Common");
+  const insertFuncCategory = useDialogStore((s) => s.insertFuncCategory);
+  const setInsertFuncCategory = useDialogStore((s) => s.setInsertFuncCategory);
 
   // Data Tab Modal Dialog States
   const [dataFields, setDataFields] = useState<PivotField[]>([]);
@@ -222,7 +216,6 @@ export default function App() {
   // AI & Diagnostic state
   const analysisSummary = useDialogStore((s) => s.analysisSummary);
   const diagnosticResult = useDialogStore((s) => s.diagnosticResult);
-  const setDiagnosticResult = useDialogStore((s) => s.setDiagnosticResult);
 
   // Additional Tab Modal Dialog States
   const [watchList, setWatchList] = useState<WatchCellItem[]>([]);
@@ -238,9 +231,6 @@ export default function App() {
   const setAllowEditRanges = useDialogStore((s) => s.setAllowEditRanges);
   const workbookStats = useDialogStore((s) => s.workbookStats);
 
-  // Only the formula-tab calc mode is left; the rest of the view state moved out
-  // with the view and review commands, and RibbonContainer subscribes for itself.
-  const setCalcManual = useViewStore((s) => s.setCalcManual);
 
   // Chart state. The mirroring refs are gone: stable callbacks read the current
   // value through useChartStore.getState() instead.
@@ -1520,6 +1510,7 @@ export default function App() {
   const handlePageLayoutCommand = usePageLayoutCommands();
   const handleViewCommand = useViewCommands();
   const handleReviewCommand = useReviewCommands();
+  const handleFormulaCommand = useFormulaCommands(useStableCallback(() => syncSelectionState()));
   const handleAiCommand = useAiCommands(useStableCallback((c: string) => void handleRibbonCommand(c)));
 
   // Handle commands dispatched from Ribbon
@@ -1556,6 +1547,7 @@ export default function App() {
     if (handlePageLayoutCommand(cmd, ctx)) return;
     if (handleViewCommand(cmd, ctx)) return;
     if (handleReviewCommand(cmd, ctx)) return;
+    if (handleFormulaCommand(cmd, ctx, ...args)) return;
     if (handleAiCommand(cmd, ctx)) return;
 
     try {
@@ -2081,95 +2073,6 @@ export default function App() {
         }
         case "timeline-open": {
           setStatus("已为日期列创建时间线筛选器");
-          break;
-        }
-
-        // ── 公式 (Formulas) ──
-        case "insert-function-open": {
-          setInsertFuncCategory(args[0] || "Common");
-          setIsInsertFuncOpen(true);
-          break;
-        }
-        case "autofn": {
-          const fn = args[0] || "SUM";
-          const res = applyAutoSum(worksheet, range, fn);
-          setStatus(res.message);
-          syncSelectionState();
-          break;
-        }
-        case "name-manager-open": {
-          setIsNameManagerOpen(true);
-          break;
-        }
-        case "create-names:top": {
-          const res = createNamesFromSelection(worksheet, range, "top", definedNames);
-          if (res.success) {
-            setDefinedNames(res.updatedList);
-          }
-          setStatus(res.message);
-          break;
-        }
-        case "create-names:left": {
-          const res = createNamesFromSelection(worksheet, range, "left", definedNames);
-          if (res.success) {
-            setDefinedNames(res.updatedList);
-          }
-          setStatus(res.message);
-          break;
-        }
-        case "trace-precedents": {
-          const res = tracePrecedents(worksheet, range);
-          setStatus(res.message);
-          break;
-        }
-        case "trace-dependents": {
-          const res = traceDependents(worksheet, range);
-          setStatus(res.message);
-          break;
-        }
-        case "remove-arrows": {
-          clearAuditHighlights(worksheet);
-          setStatus("已移去所有公式追踪高亮与箭头");
-          break;
-        }
-        case "toggle-show-formulas": {
-          const curFormula = range.getFormula?.();
-          if (curFormula) {
-            setStatus(`公式明细 (${range.getA1Notation()}): ${curFormula}`);
-          } else {
-            const val = range.getValue?.();
-            setStatus(`单元格 (${range.getA1Notation()}) 为静态值: ${val != null ? String(val) : "空"}`);
-          }
-          break;
-        }
-        case "watch-window": {
-          setIsWatchWindowOpen(true);
-          break;
-        }
-        case "calc-mode:auto": {
-          setCalcManual(false);
-          setStatus("计算选项已切换为: 自动计算");
-          break;
-        }
-        case "calc-mode:manual": {
-          setCalcManual(true);
-          setStatus("计算选项已切换为: 手动计算");
-          break;
-        }
-        case "calculate-now": {
-          const res = calculateNow(workbook);
-          setStatus(res.message);
-          break;
-        }
-        case "calculate-sheet": {
-          const res = calculateSheet(worksheet);
-          setStatus(res.message);
-          break;
-        }
-        case "error-checking": {
-          const res = checkFormulaErrors(worksheet);
-          setDiagnosticResult(res.message);
-          setStatus(res.message);
           break;
         }
 

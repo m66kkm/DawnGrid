@@ -7,4 +7,4 @@ export * from "./calculation";
 export * from "./WatchWindowDialog";
 export * from "./InsertFunctionDialog";
 export { NameManagerDialog } from "./NameManagerDialog";
-
+export * from "./useFormulaCommands";
