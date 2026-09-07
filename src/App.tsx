@@ -31,7 +31,6 @@ import {
   saveWorkbookToDisk,
 } from "./shared/univer-adapter";
 import type { SheetMetadata, WorkbookMetadata } from "./shared/types";
-import { Ribbon } from "./Ribbon";
 import { FormatCellsDialog } from "./home/FormatCellsDialog";
 import { InsertFunctionDialog } from "./formular/InsertFunctionDialog";
 import { AiAssistantModal } from "./shared/AiAssistantModal";
@@ -78,7 +77,10 @@ import {
   type ChartStateEdit,
   type ChartVisualState,
 } from "./charts";
-import { type SelectionFormat, isSameSelectionFormat, toSelectionFormat } from "./shared/selection-format";
+import { toSelectionFormat } from "./shared/selection-format";
+import { useSelectionStore, useViewStore } from "./store";
+import { RibbonContainer } from "./layout";
+import { useStableCallback } from "./shared/useStableCallback";
 import "./App.css";
 
 function getColumnName(colIndex: number): string {
@@ -160,9 +162,14 @@ export default function App() {
   const [status, setStatus] = useState<string>("就绪");
   const [loading, setLoading] = useState<boolean>(false);
 
-  // Active cell selection format tracking
-  const [selectionFormat, setSelectionFormat] = useState<SelectionFormat | null>(null);
-  const [lastActiveCellAddress, setLastActiveCellAddress] = useState<string>("A1");
+  // Active cell selection format tracking — lives in the store so a cell click only
+  // re-renders the components that read it, not this whole component.
+  const setSelectionFormat = useSelectionStore((s) => s.setSelectionFormat);
+  const setLastActiveCellAddress = useSelectionStore((s) => s.setLastActiveCellAddress);
+  const lastActiveCellAddress = useSelectionStore((s) => s.lastActiveCellAddress);
+  // Read by FormatCellsDialog only; it will subscribe directly once dialogs move
+  // into DialogHost in a later phase.
+  const dialogSelectionFormat = useSelectionStore((s) => s.selectionFormat);
 
   // Modal dialog states
   const [isFormatCellsOpen, setIsFormatCellsOpen] = useState(false);
@@ -214,17 +221,26 @@ export default function App() {
   });
   const [isRecommendedChartsOpen, setIsRecommendedChartsOpen] = useState(false);
 
-  // View & Sheet Options State
-  const [showGridlines, setShowGridlines] = useState(true);
-  const [showHeadings, setShowHeadings] = useState(true);
-  const [formulaBarVisible, setFormulaBarVisible] = useState(true);
-  const [crossHighlightVisible, setCrossHighlightVisible] = useState(false);
-  const [pageBreakPreview, setPageBreakPreview] = useState(false);
-  const [printGridlines, setPrintGridlines] = useState(false);
-  const [printHeadings, setPrintHeadings] = useState(false);
-  const [sheetProtected, setSheetProtected] = useState(false);
-  const [workbookProtected, setWorkbookProtected] = useState(false);
-  const [calcManual, setCalcManual] = useState(false);
+  // View & Sheet Options State — in the store so toggling one does not rebuild the
+  // whole tree, and so a cell click does not rebuild the components that read them.
+  const setShowGridlines = useViewStore((s) => s.setShowGridlines);
+  const showHeadings = useViewStore((s) => s.showHeadings);
+  const setShowHeadings = useViewStore((s) => s.setShowHeadings);
+  const formulaBarVisible = useViewStore((s) => s.formulaBarVisible);
+  const setFormulaBarVisible = useViewStore((s) => s.setFormulaBarVisible);
+  const crossHighlightVisible = useViewStore((s) => s.crossHighlightVisible);
+  const setCrossHighlightVisible = useViewStore((s) => s.setCrossHighlightVisible);
+  const pageBreakPreview = useViewStore((s) => s.pageBreakPreview);
+  const setPageBreakPreview = useViewStore((s) => s.setPageBreakPreview);
+  const printGridlines = useViewStore((s) => s.printGridlines);
+  const setPrintGridlines = useViewStore((s) => s.setPrintGridlines);
+  const printHeadings = useViewStore((s) => s.printHeadings);
+  const setPrintHeadings = useViewStore((s) => s.setPrintHeadings);
+  const sheetProtected = useViewStore((s) => s.sheetProtected);
+  const setSheetProtected = useViewStore((s) => s.setSheetProtected);
+  const workbookProtected = useViewStore((s) => s.workbookProtected);
+  const setWorkbookProtected = useViewStore((s) => s.setWorkbookProtected);
+  const setCalcManual = useViewStore((s) => s.setCalcManual);
   const [selectedChart, setSelectedChart] = useState(false);
   const [charts, setCharts] = useState<SheetVisual[]>([]);
   const chartsRef = useRef<SheetVisual[]>(charts);
@@ -572,15 +588,13 @@ export default function App() {
         }
       } catch {}
       const fmt = toSelectionFormat(style, numFmt);
-      // toSelectionFormat always builds a fresh object, so setting it unconditionally
-      // re-renders this whole component on every command — and a single click fans out
-      // into ~11 commands. Only publish when the format actually changed.
-      setSelectionFormat((prev) => (isSameSelectionFormat(prev, fmt) ? prev : fmt));
+      // The store compares by value and keeps the previous reference when unchanged,
+      // so subscribers are only notified on a real format change.
+      setSelectionFormat(fmt);
 
       const r = ctx.range.getRow();
       const c = ctx.range.getColumn();
-      const addr = `${getColumnName(c)}${r + 1}`;
-      setLastActiveCellAddress((prev) => (prev === addr ? prev : addr));
+      setLastActiveCellAddress(`${getColumnName(c)}${r + 1}`);
     } catch (e) {
       console.warn("syncSelectionState error:", e);
     }
@@ -2611,7 +2625,7 @@ export default function App() {
           break;
         }
         case "view-page-break": {
-          setPageBreakPreview((p) => !p);
+          setPageBreakPreview(!pageBreakPreview);
           setStatus("已切换为: 分页预览视图");
           break;
         }
@@ -3223,35 +3237,40 @@ export default function App() {
       ? currentFile.split(/[/\\]/).pop() || currentFile
       : "未命名表格.xlsx";
 
+  // The Ribbon is memoized, so every callback it receives needs a stable identity —
+  // otherwise the memo misses on every render and the subscription split buys nothing.
+  const stableRibbonCommand = useStableCallback(handleRibbonCommand);
+  const stableUndo = useStableCallback(handleUndo);
+  const stableRedo = useStableCallback(handleRedo);
+  const stableNewWorkbook = useStableCallback(handleNewWorkbook);
+  const stableSave = useStableCallback(handleSave);
+  const stableSaveAs = useStableCallback(handleSaveAs);
+  const stableSaveAsCsv = useStableCallback(handleSaveAsCsv);
+  const stableOpenFile = useStableCallback(handleOpenFile);
+
+  // definedNames.map() would allocate a new array on every render, which the memo
+  // would read as a changed prop.
+  const definedNameLabels = useMemo(() => definedNames.map((n) => n.name), [definedNames]);
+  const hasCharts = visibleCharts.length > 0;
+
   return (
     <div className="sheets-app-container">
-      <Ribbon
-        onCommand={handleRibbonCommand}
+      <RibbonContainer
+        onCommand={stableRibbonCommand}
         canUndo={true}
         canRedo={true}
-        onUndo={handleUndo}
-        onRedo={handleRedo}
-        onNewWorkbook={handleNewWorkbook}
-        onSave={handleSave}
-        onSaveAs={handleSaveAs}
-        onSaveAsCsv={handleSaveAsCsv}
-        onOpenFile={handleOpenFile}
+        onUndo={stableUndo}
+        onRedo={stableRedo}
+        onNewWorkbook={stableNewWorkbook}
+        onSave={stableSave}
+        onSaveAs={stableSaveAs}
+        onSaveAsCsv={stableSaveAsCsv}
+        onOpenFile={stableOpenFile}
         fileName={currentDisplayName}
         statusMessage={loading ? "正在加载..." : status}
-        selectionFormat={selectionFormat}
-        sheetProtected={sheetProtected}
-        workbookProtected={workbookProtected}
-        formulaBarVisible={formulaBarVisible}
-        crossHighlightVisible={crossHighlightVisible}
-        showGridlines={showGridlines}
-        showHeadings={showHeadings}
-        printGridlines={printGridlines}
-        printHeadings={printHeadings}
-        pageBreakPreview={pageBreakPreview}
-        calcManual={calcManual}
         selectedChart={selectedChart}
-        hasCharts={visibleCharts.length > 0}
-        definedNames={definedNames.map((n) => n.name)}
+        hasCharts={hasCharts}
+        definedNames={definedNameLabels}
       />
 
       <main
@@ -3313,7 +3332,7 @@ export default function App() {
       <FormatCellsDialog
         isOpen={isFormatCellsOpen}
         onClose={() => setIsFormatCellsOpen(false)}
-        selectionFormat={selectionFormat}
+        selectionFormat={dialogSelectionFormat}
         onApply={handleApplyFormatCells}
       />
 

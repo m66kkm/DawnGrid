@@ -161,7 +161,7 @@ describe('toSelectionFormat', () => {
     expect(toSelectionFormat({ ht: 3 }).horizontalAlignment).toBe('right')
     expect(toSelectionFormat({ vt: 1 }).verticalAlignment).toBe('top')
     expect(toSelectionFormat({ vt: 3 }).verticalAlignment).toBe('bottom')
-    expect(toSelectionFormat({ ht: 99 }).horizontalAlignment).toBeNull()
+    expect(toSelectionFormat({ ht: 99 as never }).horizontalAlignment).toBeNull()
   })
 
   it('normalizes colors through normalizeHexColor', () => {
