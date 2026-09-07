@@ -1,4 +1,13 @@
 import { create } from 'zustand'
+import type { AllowEditRangeItem } from '../review/AllowEditRangesDialog'
+
+export interface WorkbookStats {
+  sheetCount: number
+  cellCount: number
+  formulaCount: number
+  rowCount: number
+  colCount: number
+}
 
 /**
  * Identifies the one dialog that may be open at a time.
@@ -37,6 +46,21 @@ export interface DialogState {
    *  dismiss a dialog opened after it. */
   closeDialogIf: (id: DialogId) => void
   isOpen: (id: DialogId) => boolean
+
+  // Payloads the dialogs read. They live here rather than in each domain so a
+  // command handler can populate a dialog and open it without App relaying props.
+  allowEditRanges: AllowEditRangeItem[]
+  workbookStats: WorkbookStats
+  setAllowEditRanges: (ranges: AllowEditRangeItem[]) => void
+  setWorkbookStats: (stats: WorkbookStats) => void
+}
+
+const EMPTY_STATS: WorkbookStats = {
+  sheetCount: 1,
+  cellCount: 0,
+  formulaCount: 0,
+  rowCount: 0,
+  colCount: 0,
 }
 
 export const useDialogStore = create<DialogState>((set, get) => ({
@@ -46,4 +70,9 @@ export const useDialogStore = create<DialogState>((set, get) => ({
   closeDialog: () => set({ activeDialog: null }),
   closeDialogIf: (id) => set((s) => (s.activeDialog === id ? { activeDialog: null } : s)),
   isOpen: (id) => get().activeDialog === id,
+
+  allowEditRanges: [],
+  workbookStats: EMPTY_STATS,
+  setAllowEditRanges: (ranges) => set({ allowEditRanges: ranges }),
+  setWorkbookStats: (stats) => set({ workbookStats: stats }),
 }))

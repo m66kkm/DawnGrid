@@ -57,7 +57,7 @@ import {
 } from "./formular";
 import { SymbolDialog } from "./insert/SymbolDialog";
 import { HeaderFooterDialog, type HeaderFooterData } from "./insert/HeaderFooterDialog";
-import { AllowEditRangesDialog, type AllowEditRangeItem } from "./review/AllowEditRangesDialog";
+import { AllowEditRangesDialog } from "./review/AllowEditRangesDialog";
 import { WorkbookStatsModal } from "./shared/WorkbookStatsModal";
 import {
   RecommendedChartsDialog,
@@ -88,6 +88,7 @@ import {
 } from "./store";
 import { RibbonContainer } from "./layout";
 import { usePageLayoutCommands, useViewCommands } from "./view";
+import { useReviewCommands } from "./review";
 import { NotificationDialog } from "./shared/NotificationDialog";
 import { useStableCallback } from "./shared/useStableCallback";
 import "./App.css";
@@ -231,21 +232,12 @@ export default function App() {
     footerCenter: "第 &[页码] 页，共 &[总页数] 页",
     footerRight: "",
   });
-  const [allowEditRanges, setAllowEditRanges] = useState<AllowEditRangeItem[]>([]);
-  const [statsData, setStatsData] = useState({
-    sheetCount: 1,
-    cellCount: 0,
-    formulaCount: 0,
-    rowCount: 0,
-    colCount: 0,
-  });
+  const allowEditRanges = useDialogStore((s) => s.allowEditRanges);
+  const setAllowEditRanges = useDialogStore((s) => s.setAllowEditRanges);
+  const workbookStats = useDialogStore((s) => s.workbookStats);
 
-  // Remaining view state App still reads. The display toggles moved out with the
-  // view commands - RibbonContainer subscribes to them directly.
-  const sheetProtected = useViewStore((s) => s.sheetProtected);
-  const setSheetProtected = useViewStore((s) => s.setSheetProtected);
-  const workbookProtected = useViewStore((s) => s.workbookProtected);
-  const setWorkbookProtected = useViewStore((s) => s.setWorkbookProtected);
+  // Only the formula-tab calc mode is left; the rest of the view state moved out
+  // with the view and review commands, and RibbonContainer subscribes for itself.
   const setCalcManual = useViewStore((s) => s.setCalcManual);
 
   // Chart state. The mirroring refs are gone: stable callbacks read the current
@@ -1525,6 +1517,7 @@ export default function App() {
 
   const handlePageLayoutCommand = usePageLayoutCommands();
   const handleViewCommand = useViewCommands();
+  const handleReviewCommand = useReviewCommands();
 
   // Handle commands dispatched from Ribbon
   async function handleRibbonCommand(cmd: string, ...args: any[]) {
@@ -1559,6 +1552,7 @@ export default function App() {
     // command, so the switch below only sees what is still inline here.
     if (handlePageLayoutCommand(cmd, ctx)) return;
     if (handleViewCommand(cmd, ctx)) return;
+    if (handleReviewCommand(cmd, ctx)) return;
 
     try {
       switch (cmd) {
@@ -2428,127 +2422,6 @@ export default function App() {
           break;
         }
 
-        // ── 审阅 (Review) ──
-        case "sheet-protect": {
-          const nextState = !sheetProtected;
-          setSheetProtected(nextState);
-          setStatus(nextState ? "工作表保护已生效（已限制未授权改动）" : "工作表保护已取消");
-          break;
-        }
-        case "workbook-protect": {
-          const nextState = !workbookProtected;
-          setWorkbookProtected(nextState);
-          setStatus(nextState ? "工作簿结构保护已生效" : "工作簿结构保护已取消");
-          break;
-        }
-        case "allow-edit-ranges": {
-          setIsAllowEditRangesOpen(true);
-          break;
-        }
-        case "spellcheck": {
-          setStatus("拼写检查完毕：选区内文本拼写均正确");
-          break;
-        }
-        case "workbook-statistics": {
-          try {
-            const snapshot = workbook.save();
-            let cells = 0;
-            let formulas = 0;
-            const sheetsObj = (snapshot as any)?.sheets || {};
-            for (const s of Object.values(sheetsObj)) {
-              for (const row of Object.values((s as any)?.cellData || {})) {
-                for (const cell of Object.values((row as any) || {})) {
-                  if (!cell) continue;
-                  if ((cell as any).v !== undefined && (cell as any).v !== null && (cell as any).v !== "") cells++;
-                  if (typeof (cell as any).f === "string" && (cell as any).f.length > 0) formulas++;
-                }
-              }
-            }
-            setStatsData({
-              sheetCount: Object.keys(sheetsObj).length || 1,
-              cellCount: cells,
-              formulaCount: formulas,
-              rowCount: worksheet.getMaxRows(),
-              colCount: worksheet.getMaxColumns(),
-            });
-          } catch {
-            setStatsData({
-              sheetCount: 1,
-              cellCount: 12,
-              formulaCount: 2,
-              rowCount: worksheet.getMaxRows(),
-              colCount: worksheet.getMaxColumns(),
-            });
-          }
-          setIsStatsModalOpen(true);
-          break;
-        }
-        case "translate:zh": {
-          const v = String(range.getValue() || "");
-          if (v) {
-            setStatus(`翻译结果 (中文): "${v}"`);
-          } else {
-            setStatus("翻译 (中文)：请先选择包含文本的单元格");
-          }
-          break;
-        }
-        case "translate:en": {
-          const v = String(range.getValue() || "");
-          if (v) {
-            setStatus(`翻译结果 (英文): "${v}"`);
-          } else {
-            setStatus("翻译 (英文)：请先选择包含文本的单元格");
-          }
-          break;
-        }
-        case "translate:dialog": {
-          const v = String(range.getValue() || "");
-          const target = window.prompt("请输入需要翻译的文本或确认当前单元格内容:", v || "你好，世界");
-          if (target) {
-            setStatus(`已翻译 "${target}": Hello, World!`);
-          }
-          break;
-        }
-        case "note-open":
-        case "comment-new": {
-          const noteText = window.prompt("请输入批注/备注内容:", "审核通过");
-          if (noteText) {
-            try {
-              (range as any).createOrUpdateNote?.({ note: noteText });
-              setStatus(`已添加批注: "${noteText}"`);
-            } catch {
-              range.setValue(`${range.getValue() || ""} [批注: ${noteText}]`);
-              setStatus(`已添加批注: "${noteText}"`);
-            }
-          }
-          break;
-        }
-        case "note-delete":
-        case "comment-delete": {
-          try {
-            (range as any).deleteNote?.();
-            setStatus("已删除当前单元格批注");
-          } catch {
-            setStatus("批注已清除");
-          }
-          break;
-        }
-        case "note-prev":
-        case "comment-prev": {
-          setStatus("已跳转至上一条批注");
-          break;
-        }
-        case "note-next":
-        case "comment-next": {
-          setStatus("已跳转至下一条批注");
-          break;
-        }
-        case "note-show-toggle":
-        case "comment-show": {
-          setStatus("已切换显示/隐藏所有批注框");
-          break;
-        }
-
         // ── 图表设计 (Chart Design) ──
         case "activate-chart-tab": {
           const target = getTargetChart();
@@ -3209,7 +3082,7 @@ export default function App() {
 
       {/* Workbook Statistics Modal */}
       {activeDialog === "workbook-stats" && (
-        <WorkbookStatsModal isOpen onClose={() => setIsStatsModalOpen(false)} stats={statsData} />
+        <WorkbookStatsModal isOpen onClose={() => setIsStatsModalOpen(false)} stats={workbookStats} />
       )}
 
       {/* Chart dialogs stay mounted: useCssTransitionMount needs them alive to play
