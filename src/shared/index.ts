@@ -16,3 +16,4 @@ export * from './NotificationDialog';
 export * from './commandTypes';
 export * from './useAiCommands';
 export * from './rowHeights';
+export * from './useMiscCommands';

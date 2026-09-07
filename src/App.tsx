@@ -82,6 +82,7 @@ import { useInsertCommands } from "./insert/useInsertCommands";
 import { useDataCommands } from "./data/useDataCommands";
 import { useChartCommands } from "./charts/useChartCommands";
 import { useHomeCommands } from "./home/useHomeCommands";
+import { useMiscCommands } from "./shared/useMiscCommands";
 import { useAiCommands } from "./shared/useAiCommands";
 import { NotificationDialog } from "./shared/NotificationDialog";
 import { useStableCallback } from "./shared/useStableCallback";
@@ -1468,6 +1469,7 @@ export default function App() {
   const handleReviewCommand = useReviewCommands();
   const handleFormulaCommand = useFormulaCommands(useStableCallback(() => syncSelectionState()));
   const handleHomeCommand = useHomeCommands();
+  const handleMiscCommand = useMiscCommands();
   const handleChartCommand = useChartCommands({
     getTargetChart: useStableCallback((kind?: RecommendedKind) => getTargetChart(kind)),
     insertChartObject: useStableCallback((kind: RecommendedKind, title?: string) =>
@@ -1525,107 +1527,9 @@ export default function App() {
     if (handleAiCommand(cmd, ctx)) return;
 
     try {
-      switch (cmd) {
-        default: {
-          // Dynamic prefix matching
-          // useHomeCommands claims the named cell styles; this remains the
-          // fallback for style names it does not list, which use slightly
-          // different colours (e.g. "heading1" without the dash).
-          if (cmd.startsWith("cell-style:")) {
-            const styleName = cmd.slice("cell-style:".length);
-            if (styleName.includes("accent1")) {
-              range.setBackground("#D9E1F2");
-              range.setFontColor("#002060");
-            } else if (styleName.includes("good")) {
-              range.setBackground("#C6EFCE");
-              range.setFontColor("#006100");
-            } else if (styleName.includes("bad")) {
-              range.setBackground("#FFC7CE");
-              range.setFontColor("#9C0006");
-            } else if (styleName.includes("neutral")) {
-              range.setBackground("#FFEB9C");
-              range.setFontColor("#9C6500");
-            } else if (styleName.includes("title")) {
-              range.setFontSize(18);
-              range.setFontWeight("bold");
-              range.setFontColor("#1F497D");
-            } else if (styleName.includes("heading1")) {
-              range.setFontSize(15);
-              range.setFontWeight("bold");
-              range.setFontColor("#1F497D");
-            } else if (styleName.includes("total")) {
-              range.setFontWeight("bold");
-              range.setFontLine("underline");
-            } else {
-              range.setBackground("#F2F2F2");
-            }
-            setStatus(`已应用单元格样式: ${styleName}`);
-          } else if (cmd.startsWith("format-as-table:")) {
-            const tableStyle = cmd.slice("format-as-table:".length);
-            const startR = range.getRow();
-            const startC = range.getColumn();
-            const h = range.getHeight();
-            const w = range.getWidth();
-            // Header style
-            for (let c = 0; c < w; c++) {
-              const headerCell = worksheet.getRange(startR, startC + c, 1, 1);
-              headerCell.setBackground("#4472C4");
-              headerCell.setFontColor("#FFFFFF");
-              headerCell.setFontWeight("bold");
-            }
-            // Alternating row style
-            for (let r = 1; r < h; r++) {
-              const bg = r % 2 === 1 ? "#D9E1F2" : "#FFFFFF";
-              for (let c = 0; c < w; c++) {
-                worksheet.getRange(startR + r, startC + c, 1, 1).setBackground(bg);
-              }
-            }
-            setStatus(`已套用表格样式: ${tableStyle}`);
-          } else if (cmd.startsWith("theme:") || cmd.startsWith("colors:") || cmd.startsWith("fonts:") || cmd.startsWith("effects:")) {
-            setStatus(`已切换主题方案: ${cmd}`);
-          } else if (cmd.startsWith("fn-cat:")) {
-            const cat = cmd.slice("fn-cat:".length);
-            const map: Record<string, string> = {
-              financial: "=PMT(0.05/12, 360, 1000000)",
-              logical: "=IF(A1>0, \"Pass\", \"Fail\")",
-              text: "=CONCATENATE(A1, \" \", B1)",
-              datetime: "=TODAY()",
-              lookup: "=VLOOKUP(A1, B1:D10, 2, FALSE)",
-              math: "=ROUND(A1, 2)",
-            };
-            const sample = map[cat] || "=SUM(A1:A10)";
-            range.setValue(sample);
-            setStatus(`已插入 ${cat} 类别函数: ${sample}`);
-          } else if (cmd.startsWith("use-in-formula:")) {
-            const name = cmd.slice("use-in-formula:".length);
-            range.setValue(`=${name}`);
-            setStatus(`已插入已定义名称: =${name}`);
-          } else if (cmd.startsWith("what-if:")) {
-            if (cmd === "what-if:goal-seek") {
-              setIsGoalSeekOpen(true);
-            } else {
-              setStatus(`模拟分析: ${cmd.slice("what-if:".length)}`);
-            }
-          } else if (cmd.startsWith("row-height:")) {
-            const pt = Number(cmd.slice("row-height:".length));
-            if (!isNaN(pt) && pt > 0) {
-              worksheet.setRowHeightsForced(range.getRow(), 1, Math.round((pt * 96) / 72));
-              setStatus(`行高已设置为: ${pt} 磅`);
-            }
-          } else if (cmd.startsWith("col-width:")) {
-            const ch = Number(cmd.slice("col-width:".length));
-            if (!isNaN(ch) && ch > 0) {
-              worksheet.setColumnWidth(range.getColumn(), Math.round(ch * 8));
-              setStatus(`列宽已设置为: ${ch} 字符`);
-            }
-          } else {
-            console.log("Ribbon command triggered:", cmd, args);
-            setStatus(`执行: ${cmd}`);
-          }
-          break;
-        }
-      }
-
+      // Runs last: everything the domain handlers did not claim, plus the
+      // catch-all that reports an unrecognised command.
+      handleMiscCommand(cmd, ctx, ...args);
       syncSelectionState();
     } catch (err) {
       console.error("Error executing ribbon command:", err);
