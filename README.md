@@ -184,7 +184,80 @@ graph TD
 - **Core Engine**: Rust (`xlsx-engine` sidecar, quick-xml, memchr)
 - **Canvas Rendering**: [@univerjs/core](https://univer.ai/)
 - **Frontend Stack**: React 19, TypeScript, Vite
+- **State**: [Zustand](https://zustand.docs.pmnd.rs/) (五个 slice，组件按需订阅)
+- **Testing**: [Vitest](https://vitest.dev/) + happy-dom
 - **Styling**: Pure Modern CSS (Zero Tailwind/CSS-in-JS bloat for native performance)
+
+### 前端目录结构
+
+按 Ribbon 功能区分域组织。每个功能目录含该标签页的对话框与命令处理器，
+并通过 `index.ts` 统一导出。
+
+```
+src/
+├─ App.tsx              Univer 初始化、文件读写、布局装配
+├─ Ribbon.tsx           功能区 UI（横跨全部 7 个标签页，故留在根目录）
+│
+├─ store/               Zustand 状态
+│  ├─ selectionSlice    选区格式与活动单元格（每次点击都变）
+│  ├─ viewSlice         显示开关、保护标志、计算模式
+│  ├─ documentSlice     当前文件、元数据、状态栏、已定义名称
+│  ├─ chartSlice        图表对象与选中态
+│  ├─ dialogSlice       activeDialog 判别式 + 各对话框载荷
+│  └─ notificationSlice 需用户确认的提示（独立于 dialogSlice）
+│
+├─ home/                「开始」：格式、剪贴板、行列操作
+├─ insert/              「插入」：透视表、页眉页脚、符号
+├─ data/                「数据」：排序筛选、分列、分级显示
+├─ formular/            「公式」：函数库、名称管理、审核、计算
+├─ review/              「审阅」：保护、批注、统计
+├─ view/                「视图」+「页面布局」：缩放、冻结、打印设置
+├─ charts/              「图表设计」：图表模型、渲染、编辑命令
+│
+├─ layout/              RibbonContainer 等订阅 store 的容器组件
+├─ shared/              跨域组件与能力（含 AI 命令、兜底命令处理器）
+└─ __tests__/           单元测试与命令契约测试
+```
+
+### 命令分发
+
+Ribbon 的每个按钮发出一个命令字符串，由 `handleRibbonCommand` 依次交给各域
+处理器。处理器返回 `true` 表示认领该命令，否则交给下一个——先匹配先执行。
+
+```
+handleRibbonCommand(cmd)
+  ├─ 三个早退分支（插入函数、自动求和、公式中使用名称）
+  ├─ handlePageLayoutCommand  →  view/usePageLayoutCommands
+  ├─ handleViewCommand        →  view/useViewCommands
+  ├─ handleReviewCommand      →  review/useReviewCommands
+  ├─ handleFormulaCommand     →  formular/useFormulaCommands
+  ├─ handleInsertCommand      →  insert/useInsertCommands
+  ├─ handleDataCommand        →  data/useDataCommands
+  ├─ handleChartCommand       →  charts/useChartCommands
+  ├─ handleHomeCommand        →  home/useHomeCommands
+  ├─ handleAiCommand          →  shared/useAiCommands
+  └─ handleMiscCommand        →  shared/useMiscCommands（兜底，认领全部剩余）
+```
+
+少数处理器需要跨域能力（如 `ai-check` 要调用公式域的错误检查），这类依赖
+通过 hook 参数显式注入，而非挂在 `CommandContext` 上——这样"哪些域会重入
+分发器"在调用处一目了然。
+
+---
+
+## 🧪 测试 (Testing)
+
+```bash
+bun run test         # 单次运行
+bun run test:watch   # 监听模式
+```
+
+覆盖三类：纯函数（颜色归一化、A1 地址解析等）、store slice（含"值未变则
+不通知订阅者"这类关键行为）、以及命令契约测试。
+
+契约测试不 mock 整个 Univer——只注入最小的 `ctx` stub，断言"给定命令 ID
+调用了预期的 API、产生了预期的状态"。这样既能覆盖命令路由的正确性，又不会
+因 Univer 升级而大面积失效。
 
 ---
 
@@ -209,6 +282,9 @@ bun run dev
 
 # 若仅需在浏览器调试 Web 前端:
 bun run dev:web
+
+# 运行测试
+bun run test
 ```
 
 ### 构建发布包 (Production Release)

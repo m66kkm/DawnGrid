@@ -72,7 +72,6 @@ import {
   useDocumentStore,
   useNotificationStore,
   useSelectionStore,
-  type DialogId,
 } from "./store";
 import { RibbonContainer } from "./layout";
 import { usePageLayoutCommands, useViewCommands } from "./view";
@@ -131,38 +130,11 @@ export default function App() {
   // into DialogHost in a later phase.
   const dialogSelectionFormat = useSelectionStore((s) => s.selectionFormat);
 
-  // Modal dialog state. Only one dialog is open at a time, so the nineteen
-  // independent booleans collapse into a single discriminant in the store; the
-  // per-dialog setters below are thin shims over it, which keeps the call sites
-  // (`setIsPivotOpen(true)`) reading the same as before.
+  // Modal dialog state. Only one dialog is open at a time, so a single
+  // discriminant in the store replaces the nineteen independent booleans.
   const activeDialog = useDialogStore((s) => s.activeDialog);
   const openDialog = useDialogStore((s) => s.openDialog);
   const closeDialogIf = useDialogStore((s) => s.closeDialogIf);
-
-  const dialogSetter = useCallback(
-    (id: DialogId) => (open: boolean) => (open ? openDialog(id) : closeDialogIf(id)),
-    [openDialog, closeDialogIf],
-  );
-
-  const setIsFormatCellsOpen = useMemo(() => dialogSetter("format-cells"), [dialogSetter]);
-  const setIsInsertFuncOpen = useMemo(() => dialogSetter("insert-function"), [dialogSetter]);
-  const setIsAiOpen = useMemo(() => dialogSetter("ai"), [dialogSetter]);
-  const setIsGoToOpen = useMemo(() => dialogSetter("goto"), [dialogSetter]);
-  const setIsPivotOpen = useMemo(() => dialogSetter("pivot"), [dialogSetter]);
-  const setIsGoalSeekOpen = useMemo(() => dialogSetter("goal-seek"), [dialogSetter]);
-  const setIsSubtotalOpen = useMemo(() => dialogSetter("subtotal"), [dialogSetter]);
-  const setIsConsolidateOpen = useMemo(() => dialogSetter("consolidate"), [dialogSetter]);
-  const setIsAdvFilterOpen = useMemo(() => dialogSetter("advanced-filter"), [dialogSetter]);
-  const setIsCustomSortOpen = useMemo(() => dialogSetter("custom-sort"), [dialogSetter]);
-  const setIsNameManagerOpen = useMemo(() => dialogSetter("name-manager"), [dialogSetter]);
-  const setIsWatchWindowOpen = useMemo(() => dialogSetter("watch-window"), [dialogSetter]);
-  const setIsSymbolOpen = useMemo(() => dialogSetter("symbol"), [dialogSetter]);
-  const setIsHeaderFooterOpen = useMemo(() => dialogSetter("header-footer"), [dialogSetter]);
-  const setIsAllowEditRangesOpen = useMemo(() => dialogSetter("allow-edit-ranges"), [dialogSetter]);
-  const setIsStatsModalOpen = useMemo(() => dialogSetter("workbook-stats"), [dialogSetter]);
-  const setIsRecommendedChartsOpen = useMemo(() => dialogSetter("recommended-charts"), [dialogSetter]);
-  const setIsChartSelectDataOpen = useMemo(() => dialogSetter("chart-select-data"), [dialogSetter]);
-  const setIsChartFormatOpen = useMemo(() => dialogSetter("chart-format"), [dialogSetter]);
 
   const insertFuncCategory = useDialogStore((s) => s.insertFuncCategory);
   const setInsertFuncCategory = useDialogStore((s) => s.setInsertFuncCategory);
@@ -1490,7 +1462,7 @@ export default function App() {
     if (cmd === "insert-function-open" || cmd.startsWith("insert-function-open:")) {
       const cat = cmd.includes(":") ? cmd.split(":")[1] : (args[0] || "Common");
       setInsertFuncCategory(cat);
-      setIsInsertFuncOpen(true);
+      openDialog("insert-function");
       return;
     }
 
@@ -1547,22 +1519,22 @@ export default function App() {
       if (e.shiftKey && e.key === "F3") {
         e.preventDefault();
         setInsertFuncCategory("Common");
-        setIsInsertFuncOpen(true);
+        openDialog("insert-function");
         return;
       }
       if (e.ctrlKey && e.key === "F3") {
         e.preventDefault();
-        setIsNameManagerOpen(true);
+        openDialog("name-manager");
         return;
       }
 
       if (e.ctrlKey || e.metaKey) {
         if (e.key === "1") {
           e.preventDefault();
-          setIsFormatCellsOpen(true);
+          openDialog("format-cells");
         } else if (e.key === "g" || e.key === "G") {
           e.preventDefault();
-          setIsGoToOpen(true);
+          openDialog("goto");
         } else if (e.key === "b" || e.key === "B") {
           e.preventDefault();
           handleRibbonCommand("bold");
@@ -1672,12 +1644,12 @@ export default function App() {
           onOpenSelectData={(chart) => {
             setActiveChartId(chart.id);
             setSelectedChart(true);
-            setIsChartSelectDataOpen(true);
+            openDialog("chart-select-data");
           }}
           onOpenFormatPane={(chart) => {
             setActiveChartId(chart.id);
             setSelectedChart(true);
-            setIsChartFormatOpen(true);
+            openDialog("chart-format");
           }}
           onSwitchRowCol={(chart) => {
             const seriesSet = transposeChartSeries(chart.chart.series, (n) => `系列 ${n}`);
@@ -1711,7 +1683,7 @@ export default function App() {
       {activeDialog === "format-cells" && (
         <FormatCellsDialog
           isOpen
-          onClose={() => setIsFormatCellsOpen(false)}
+          onClose={() => closeDialogIf("format-cells")}
           selectionFormat={dialogSelectionFormat}
           onApply={handleApplyFormatCells}
         />
@@ -1723,7 +1695,7 @@ export default function App() {
           isOpen
           targetLabel={lastActiveCellAddress || "A1"}
           initialCategory={insertFuncCategory}
-          onClose={() => setIsInsertFuncOpen(false)}
+          onClose={() => closeDialogIf("insert-function")}
           onApply={handleInsertFormula}
           onInsert={handleInsertFormula}
         />
@@ -1731,14 +1703,14 @@ export default function App() {
 
       {/* Go To Dialog (Ctrl+G) */}
       {activeDialog === "goto" && (
-        <GoToDialog isOpen onClose={() => setIsGoToOpen(false)} onGoTo={handleGoToAddress} />
+        <GoToDialog isOpen onClose={() => closeDialogIf("goto")} onGoTo={handleGoToAddress} />
       )}
 
       {/* Genspark AI Assistant Modal */}
       {activeDialog === "ai" && (
         <AiAssistantModal
           isOpen
-          onClose={() => setIsAiOpen(false)}
+          onClose={() => closeDialogIf("ai")}
           activeCell={lastActiveCellAddress}
           onApplyFormula={handleInsertFormula}
           onRunErrorCheck={() => handleRibbonCommand("error-checking")}
@@ -1753,7 +1725,7 @@ export default function App() {
       {activeDialog === "name-manager" && (
         <NameManagerDialog
           isOpen
-          onClose={() => setIsNameManagerOpen(false)}
+          onClose={() => closeDialogIf("name-manager")}
           names={definedNames}
           onAdd={(name, ref, scope) => {
             setDefinedNames((prev) => [...prev.filter((x) => x.name !== name), { name, ref, scope }]);
@@ -1770,7 +1742,7 @@ export default function App() {
       {activeDialog === "watch-window" && (
         <WatchWindowDialog
           isOpen
-          onClose={() => setIsWatchWindowOpen(false)}
+          onClose={() => closeDialogIf("watch-window")}
           watchList={watchList}
           onAddWatch={handleAddWatch}
           onDeleteWatch={handleDeleteWatch}
@@ -1783,7 +1755,7 @@ export default function App() {
       {activeDialog === "symbol" && (
         <SymbolDialog
           isOpen
-          onClose={() => setIsSymbolOpen(false)}
+          onClose={() => closeDialogIf("symbol")}
           onInsert={(char) => {
             const ctx = getTargetRange();
             if (ctx) {
@@ -1800,7 +1772,7 @@ export default function App() {
       {activeDialog === "header-footer" && (
         <HeaderFooterDialog
           isOpen
-          onClose={() => setIsHeaderFooterOpen(false)}
+          onClose={() => closeDialogIf("header-footer")}
           initialData={headerFooterData}
           onApply={(data) => {
             setHeaderFooterData(data);
@@ -1813,7 +1785,7 @@ export default function App() {
       {activeDialog === "allow-edit-ranges" && (
         <AllowEditRangesDialog
           isOpen
-          onClose={() => setIsAllowEditRangesOpen(false)}
+          onClose={() => closeDialogIf("allow-edit-ranges")}
           ranges={allowEditRanges}
           onApply={(ranges) => {
             setAllowEditRanges(ranges);
@@ -1824,7 +1796,7 @@ export default function App() {
 
       {/* Workbook Statistics Modal */}
       {activeDialog === "workbook-stats" && (
-        <WorkbookStatsModal isOpen onClose={() => setIsStatsModalOpen(false)} stats={workbookStats} />
+        <WorkbookStatsModal isOpen onClose={() => closeDialogIf("workbook-stats")} stats={workbookStats} />
       )}
 
       {/* Chart dialogs stay mounted: useCssTransitionMount needs them alive to play
@@ -1833,7 +1805,7 @@ export default function App() {
       {/* Recommended Charts Dialog */}
       <RecommendedChartsDialog
         isOpen={activeDialog === "recommended-charts"}
-        onClose={() => setIsRecommendedChartsOpen(false)}
+        onClose={() => closeDialogIf("recommended-charts")}
         recommendations={recommendedData}
         onSelectChart={(kind) => {
           insertChartObject(kind);
@@ -1843,7 +1815,7 @@ export default function App() {
       {/* Select Data Dialog */}
       <ChartSelectDataDialog
         isOpen={activeDialog === "chart-select-data"}
-        onClose={() => setIsChartSelectDataOpen(false)}
+        onClose={() => closeDialogIf("chart-select-data")}
         chart={visibleCharts.find((c) => c.id === activeChartId)?.chart ?? visibleCharts[visibleCharts.length - 1]?.chart ?? null}
         onApply={(edit) => {
           const targetId = activeChartId || visibleCharts[visibleCharts.length - 1]?.id;
@@ -1861,7 +1833,7 @@ export default function App() {
       {/* Format Chart Dialog */}
       <ChartFormatDialog
         isOpen={activeDialog === "chart-format"}
-        onClose={() => setIsChartFormatOpen(false)}
+        onClose={() => closeDialogIf("chart-format")}
         chart={visibleCharts.find((c) => c.id === activeChartId)?.chart ?? visibleCharts[visibleCharts.length - 1]?.chart ?? null}
         onApply={(edit) => {
           const targetId = activeChartId || visibleCharts[visibleCharts.length - 1]?.id;
@@ -1881,7 +1853,7 @@ export default function App() {
       {activeDialog === "pivot" && (
         <PivotDialog
           isOpen
-          onClose={() => setIsPivotOpen(false)}
+          onClose={() => closeDialogIf("pivot")}
           fields={dataFields}
           defaultRange={defaultRangeStr}
           onCreate={handleCreatePivot}
@@ -1892,7 +1864,7 @@ export default function App() {
       {activeDialog === "goal-seek" && (
         <GoalSeekDialog
           isOpen
-          onClose={() => setIsGoalSeekOpen(false)}
+          onClose={() => closeDialogIf("goal-seek")}
           activeCell={lastActiveCellAddress}
           onSolve={handleGoalSeek}
         />
@@ -1902,7 +1874,7 @@ export default function App() {
       {activeDialog === "subtotal" && (
         <SubtotalDialog
           isOpen
-          onClose={() => setIsSubtotalOpen(false)}
+          onClose={() => closeDialogIf("subtotal")}
           fields={dataFields}
           onApply={handleSubtotal}
         />
@@ -1912,7 +1884,7 @@ export default function App() {
       {activeDialog === "consolidate" && (
         <ConsolidateDialog
           isOpen
-          onClose={() => setIsConsolidateOpen(false)}
+          onClose={() => closeDialogIf("consolidate")}
           defaultRef={defaultRangeStr}
           onConsolidate={handleConsolidate}
         />
@@ -1922,7 +1894,7 @@ export default function App() {
       {activeDialog === "advanced-filter" && (
         <AdvancedFilterDialog
           isOpen
-          onClose={() => setIsAdvFilterOpen(false)}
+          onClose={() => closeDialogIf("advanced-filter")}
           fields={dataFields}
           onApply={handleAdvancedFilter}
         />
@@ -1932,7 +1904,7 @@ export default function App() {
       {activeDialog === "custom-sort" && (
         <CustomSortDialog
           isOpen
-          onClose={() => setIsCustomSortOpen(false)}
+          onClose={() => closeDialogIf("custom-sort")}
           fields={dataFields}
           onSort={handleCustomSort}
         />
