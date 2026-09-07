@@ -78,7 +78,7 @@ import {
   type ChartVisualState,
 } from "./charts";
 import { toSelectionFormat } from "./shared/selection-format";
-import { useSelectionStore, useViewStore } from "./store";
+import { useDialogStore, useSelectionStore, useViewStore, type DialogId } from "./store";
 import { RibbonContainer } from "./layout";
 import { useStableCallback } from "./shared/useStableCallback";
 import "./App.css";
@@ -171,20 +171,42 @@ export default function App() {
   // into DialogHost in a later phase.
   const dialogSelectionFormat = useSelectionStore((s) => s.selectionFormat);
 
-  // Modal dialog states
-  const [isFormatCellsOpen, setIsFormatCellsOpen] = useState(false);
-  const [isInsertFuncOpen, setIsInsertFuncOpen] = useState(false);
+  // Modal dialog state. Only one dialog is open at a time, so the nineteen
+  // independent booleans collapse into a single discriminant in the store; the
+  // per-dialog setters below are thin shims over it, which keeps the call sites
+  // (`setIsPivotOpen(true)`) reading the same as before.
+  const activeDialog = useDialogStore((s) => s.activeDialog);
+  const openDialog = useDialogStore((s) => s.openDialog);
+  const closeDialogIf = useDialogStore((s) => s.closeDialogIf);
+
+  const dialogSetter = useCallback(
+    (id: DialogId) => (open: boolean) => (open ? openDialog(id) : closeDialogIf(id)),
+    [openDialog, closeDialogIf],
+  );
+
+  const setIsFormatCellsOpen = useMemo(() => dialogSetter("format-cells"), [dialogSetter]);
+  const setIsInsertFuncOpen = useMemo(() => dialogSetter("insert-function"), [dialogSetter]);
+  const setIsAiOpen = useMemo(() => dialogSetter("ai"), [dialogSetter]);
+  const setIsGoToOpen = useMemo(() => dialogSetter("goto"), [dialogSetter]);
+  const setIsPivotOpen = useMemo(() => dialogSetter("pivot"), [dialogSetter]);
+  const setIsGoalSeekOpen = useMemo(() => dialogSetter("goal-seek"), [dialogSetter]);
+  const setIsSubtotalOpen = useMemo(() => dialogSetter("subtotal"), [dialogSetter]);
+  const setIsConsolidateOpen = useMemo(() => dialogSetter("consolidate"), [dialogSetter]);
+  const setIsAdvFilterOpen = useMemo(() => dialogSetter("advanced-filter"), [dialogSetter]);
+  const setIsCustomSortOpen = useMemo(() => dialogSetter("custom-sort"), [dialogSetter]);
+  const setIsNameManagerOpen = useMemo(() => dialogSetter("name-manager"), [dialogSetter]);
+  const setIsWatchWindowOpen = useMemo(() => dialogSetter("watch-window"), [dialogSetter]);
+  const setIsSymbolOpen = useMemo(() => dialogSetter("symbol"), [dialogSetter]);
+  const setIsHeaderFooterOpen = useMemo(() => dialogSetter("header-footer"), [dialogSetter]);
+  const setIsAllowEditRangesOpen = useMemo(() => dialogSetter("allow-edit-ranges"), [dialogSetter]);
+  const setIsStatsModalOpen = useMemo(() => dialogSetter("workbook-stats"), [dialogSetter]);
+  const setIsRecommendedChartsOpen = useMemo(() => dialogSetter("recommended-charts"), [dialogSetter]);
+  const setIsChartSelectDataOpen = useMemo(() => dialogSetter("chart-select-data"), [dialogSetter]);
+  const setIsChartFormatOpen = useMemo(() => dialogSetter("chart-format"), [dialogSetter]);
+
   const [insertFuncCategory, setInsertFuncCategory] = useState<string>("Common");
-  const [isAiOpen, setIsAiOpen] = useState(false);
-  const [isGoToOpen, setIsGoToOpen] = useState(false);
 
   // Data Tab Modal Dialog States
-  const [isPivotOpen, setIsPivotOpen] = useState(false);
-  const [isGoalSeekOpen, setIsGoalSeekOpen] = useState(false);
-  const [isSubtotalOpen, setIsSubtotalOpen] = useState(false);
-  const [isConsolidateOpen, setIsConsolidateOpen] = useState(false);
-  const [isAdvFilterOpen, setIsAdvFilterOpen] = useState(false);
-  const [isCustomSortOpen, setIsCustomSortOpen] = useState(false);
   const [dataFields, setDataFields] = useState<PivotField[]>([]);
   const [defaultRangeStr, setDefaultRangeStr] = useState<string>("A1");
 
@@ -193,14 +215,10 @@ export default function App() {
   const [diagnosticResult, setDiagnosticResult] = useState<string | null>(null);
 
   // Additional Tab Modal Dialog States
-  const [isNameManagerOpen, setIsNameManagerOpen] = useState(false);
   const [definedNames, setDefinedNames] = useState<DefinedNameRow[]>([
     { name: "SalesData", ref: "=Sheet1!$A$1:$D$10", scope: "工作簿" },
   ]);
-  const [isWatchWindowOpen, setIsWatchWindowOpen] = useState(false);
   const [watchList, setWatchList] = useState<WatchCellItem[]>([]);
-  const [isSymbolOpen, setIsSymbolOpen] = useState(false);
-  const [isHeaderFooterOpen, setIsHeaderFooterOpen] = useState(false);
   const [headerFooterData, setHeaderFooterData] = useState<HeaderFooterData>({
     headerLeft: "",
     headerCenter: "",
@@ -209,9 +227,7 @@ export default function App() {
     footerCenter: "第 &[页码] 页，共 &[总页数] 页",
     footerRight: "",
   });
-  const [isAllowEditRangesOpen, setIsAllowEditRangesOpen] = useState(false);
   const [allowEditRanges, setAllowEditRanges] = useState<AllowEditRangeItem[]>([]);
-  const [isStatsModalOpen, setIsStatsModalOpen] = useState(false);
   const [statsData, setStatsData] = useState({
     sheetCount: 1,
     cellCount: 0,
@@ -219,7 +235,6 @@ export default function App() {
     rowCount: 0,
     colCount: 0,
   });
-  const [isRecommendedChartsOpen, setIsRecommendedChartsOpen] = useState(false);
 
   // View & Sheet Options State — in the store so toggling one does not rebuild the
   // whole tree, and so a cell click does not rebuild the components that read them.
@@ -262,8 +277,6 @@ export default function App() {
   const activeSheetIdRef = useRef<string>("sheet-1");
   const workbookSubRef = useRef<any>(null);
   const [recommendedData, setRecommendedData] = useState<ChartRecommendations | null>(null);
-  const [isChartSelectDataOpen, setIsChartSelectDataOpen] = useState(false);
-  const [isChartFormatOpen, setIsChartFormatOpen] = useState(false);
 
   const handleActiveSheetSwitch = useCallback((sheetId: string) => {
     if (!sheetId) return;
@@ -3328,117 +3341,138 @@ export default function App() {
         />
       </main>
 
+      {/* Dialogs are rendered only while open. Each already bailed out with
+          `if (!isOpen) return null`, so this only hoists that check to the parent —
+          but it also stops their JSX being built on every unrelated render.
+          The three chart dialogs below are the exception: they play an exit
+          animation via useCssTransitionMount and must stay mounted to do so. */}
+
       {/* Format Cells Dialog (Ctrl+1) */}
-      <FormatCellsDialog
-        isOpen={isFormatCellsOpen}
-        onClose={() => setIsFormatCellsOpen(false)}
-        selectionFormat={dialogSelectionFormat}
-        onApply={handleApplyFormatCells}
-      />
+      {activeDialog === "format-cells" && (
+        <FormatCellsDialog
+          isOpen
+          onClose={() => setIsFormatCellsOpen(false)}
+          selectionFormat={dialogSelectionFormat}
+          onApply={handleApplyFormatCells}
+        />
+      )}
 
       {/* Insert Function Dialog (fx / Shift+F3) */}
-      <InsertFunctionDialog
-        isOpen={isInsertFuncOpen}
-        targetLabel={lastActiveCellAddress || "A1"}
-        initialCategory={insertFuncCategory}
-        onClose={() => setIsInsertFuncOpen(false)}
-        onApply={handleInsertFormula}
-        onInsert={handleInsertFormula}
-      />
+      {activeDialog === "insert-function" && (
+        <InsertFunctionDialog
+          isOpen
+          targetLabel={lastActiveCellAddress || "A1"}
+          initialCategory={insertFuncCategory}
+          onClose={() => setIsInsertFuncOpen(false)}
+          onApply={handleInsertFormula}
+          onInsert={handleInsertFormula}
+        />
+      )}
 
       {/* Go To Dialog (Ctrl+G) */}
-      <GoToDialog
-        isOpen={isGoToOpen}
-        onClose={() => setIsGoToOpen(false)}
-        onGoTo={handleGoToAddress}
-      />
+      {activeDialog === "goto" && (
+        <GoToDialog isOpen onClose={() => setIsGoToOpen(false)} onGoTo={handleGoToAddress} />
+      )}
 
       {/* Genspark AI Assistant Modal */}
-      <AiAssistantModal
-        isOpen={isAiOpen}
-        onClose={() => setIsAiOpen(false)}
-        activeCell={lastActiveCellAddress}
-        onApplyFormula={handleInsertFormula}
-        onRunErrorCheck={() => handleRibbonCommand("error-checking")}
-        onRunDataAnalysis={() => handleRibbonCommand("ai-analyze")}
-        analysisSummary={analysisSummary}
-        diagnosticResult={diagnosticResult}
-      />
+      {activeDialog === "ai" && (
+        <AiAssistantModal
+          isOpen
+          onClose={() => setIsAiOpen(false)}
+          activeCell={lastActiveCellAddress}
+          onApplyFormula={handleInsertFormula}
+          onRunErrorCheck={() => handleRibbonCommand("error-checking")}
+          onRunDataAnalysis={() => handleRibbonCommand("ai-analyze")}
+          analysisSummary={analysisSummary}
+          diagnosticResult={diagnosticResult}
+        />
+      )}
 
       {/* ── Additional Tab Dialogs (100% GenOffice Parity) ── */}
       {/* Name Manager Dialog */}
-      <NameManagerDialog
-        isOpen={isNameManagerOpen}
-        onClose={() => setIsNameManagerOpen(false)}
-        names={definedNames}
-        onAdd={(name, ref, scope) => {
-          setDefinedNames((prev) => [...prev.filter((x) => x.name !== name), { name, ref, scope }]);
-          setStatus(`已定义新名称: ${name} -> ${ref}`);
-        }}
-        onDelete={(name) => {
-          setDefinedNames((prev) => prev.filter((x) => x.name !== name));
-          setStatus(`已删除名称: ${name}`);
-        }}
-      />
+      {activeDialog === "name-manager" && (
+        <NameManagerDialog
+          isOpen
+          onClose={() => setIsNameManagerOpen(false)}
+          names={definedNames}
+          onAdd={(name, ref, scope) => {
+            setDefinedNames((prev) => [...prev.filter((x) => x.name !== name), { name, ref, scope }]);
+            setStatus(`已定义新名称: ${name} -> ${ref}`);
+          }}
+          onDelete={(name) => {
+            setDefinedNames((prev) => prev.filter((x) => x.name !== name));
+            setStatus(`已删除名称: ${name}`);
+          }}
+        />
+      )}
 
       {/* Watch Window Dialog */}
-      <WatchWindowDialog
-        isOpen={isWatchWindowOpen}
-        onClose={() => setIsWatchWindowOpen(false)}
-        watchList={watchList}
-        onAddWatch={handleAddWatch}
-        onDeleteWatch={handleDeleteWatch}
-        onRefresh={handleRefreshWatch}
-        onJumpToCell={handleGoToAddress}
-      />
+      {activeDialog === "watch-window" && (
+        <WatchWindowDialog
+          isOpen
+          onClose={() => setIsWatchWindowOpen(false)}
+          watchList={watchList}
+          onAddWatch={handleAddWatch}
+          onDeleteWatch={handleDeleteWatch}
+          onRefresh={handleRefreshWatch}
+          onJumpToCell={handleGoToAddress}
+        />
+      )}
 
       {/* Symbol Dialog */}
-      <SymbolDialog
-        isOpen={isSymbolOpen}
-        onClose={() => setIsSymbolOpen(false)}
-        onInsert={(char) => {
-          const ctx = getTargetRange();
-          if (ctx) {
-            const cur = String(ctx.range.getValue() ?? "");
-            ctx.range.setValue(cur + char);
-            setStatus(`已插入符号: ${char}`);
-            syncSelectionState();
-          }
-        }}
-      />
+      {activeDialog === "symbol" && (
+        <SymbolDialog
+          isOpen
+          onClose={() => setIsSymbolOpen(false)}
+          onInsert={(char) => {
+            const ctx = getTargetRange();
+            if (ctx) {
+              const cur = String(ctx.range.getValue() ?? "");
+              ctx.range.setValue(cur + char);
+              setStatus(`已插入符号: ${char}`);
+              syncSelectionState();
+            }
+          }}
+        />
+      )}
 
       {/* Header & Footer Dialog */}
-      <HeaderFooterDialog
-        isOpen={isHeaderFooterOpen}
-        onClose={() => setIsHeaderFooterOpen(false)}
-        initialData={headerFooterData}
-        onApply={(data) => {
-          setHeaderFooterData(data);
-          setStatus("已更新打印页眉与页脚设置");
-        }}
-      />
+      {activeDialog === "header-footer" && (
+        <HeaderFooterDialog
+          isOpen
+          onClose={() => setIsHeaderFooterOpen(false)}
+          initialData={headerFooterData}
+          onApply={(data) => {
+            setHeaderFooterData(data);
+            setStatus("已更新打印页眉与页脚设置");
+          }}
+        />
+      )}
 
       {/* Allow Edit Ranges Dialog */}
-      <AllowEditRangesDialog
-        isOpen={isAllowEditRangesOpen}
-        onClose={() => setIsAllowEditRangesOpen(false)}
-        ranges={allowEditRanges}
-        onApply={(ranges) => {
-          setAllowEditRanges(ranges);
-          setStatus(`已更新允许编辑区域 (${ranges.length} 个区域)`);
-        }}
-      />
+      {activeDialog === "allow-edit-ranges" && (
+        <AllowEditRangesDialog
+          isOpen
+          onClose={() => setIsAllowEditRangesOpen(false)}
+          ranges={allowEditRanges}
+          onApply={(ranges) => {
+            setAllowEditRanges(ranges);
+            setStatus(`已更新允许编辑区域 (${ranges.length} 个区域)`);
+          }}
+        />
+      )}
 
       {/* Workbook Statistics Modal */}
-      <WorkbookStatsModal
-        isOpen={isStatsModalOpen}
-        onClose={() => setIsStatsModalOpen(false)}
-        stats={statsData}
-      />
+      {activeDialog === "workbook-stats" && (
+        <WorkbookStatsModal isOpen onClose={() => setIsStatsModalOpen(false)} stats={statsData} />
+      )}
+
+      {/* Chart dialogs stay mounted: useCssTransitionMount needs them alive to play
+          the exit animation after isOpen flips to false. */}
 
       {/* Recommended Charts Dialog */}
       <RecommendedChartsDialog
-        isOpen={isRecommendedChartsOpen}
+        isOpen={activeDialog === "recommended-charts"}
         onClose={() => setIsRecommendedChartsOpen(false)}
         recommendations={recommendedData}
         onSelectChart={(kind) => {
@@ -3448,7 +3482,7 @@ export default function App() {
 
       {/* Select Data Dialog */}
       <ChartSelectDataDialog
-        isOpen={isChartSelectDataOpen}
+        isOpen={activeDialog === "chart-select-data"}
         onClose={() => setIsChartSelectDataOpen(false)}
         chart={visibleCharts.find((c) => c.id === activeChartId)?.chart ?? visibleCharts[visibleCharts.length - 1]?.chart ?? null}
         onApply={(edit) => {
@@ -3466,7 +3500,7 @@ export default function App() {
 
       {/* Format Chart Dialog */}
       <ChartFormatDialog
-        isOpen={isChartFormatOpen}
+        isOpen={activeDialog === "chart-format"}
         onClose={() => setIsChartFormatOpen(false)}
         chart={visibleCharts.find((c) => c.id === activeChartId)?.chart ?? visibleCharts[visibleCharts.length - 1]?.chart ?? null}
         onApply={(edit) => {
@@ -3484,53 +3518,65 @@ export default function App() {
 
       {/* ── Data Tab Dialogs (100% GenOffice Parity) ── */}
       {/* 1. Pivot Table Dialog */}
-      <PivotDialog
-        isOpen={isPivotOpen}
-        onClose={() => setIsPivotOpen(false)}
-        fields={dataFields}
-        defaultRange={defaultRangeStr}
-        onCreate={handleCreatePivot}
-      />
+      {activeDialog === "pivot" && (
+        <PivotDialog
+          isOpen
+          onClose={() => setIsPivotOpen(false)}
+          fields={dataFields}
+          defaultRange={defaultRangeStr}
+          onCreate={handleCreatePivot}
+        />
+      )}
 
       {/* 2. Goal Seek Dialog */}
-      <GoalSeekDialog
-        isOpen={isGoalSeekOpen}
-        onClose={() => setIsGoalSeekOpen(false)}
-        activeCell={lastActiveCellAddress}
-        onSolve={handleGoalSeek}
-      />
+      {activeDialog === "goal-seek" && (
+        <GoalSeekDialog
+          isOpen
+          onClose={() => setIsGoalSeekOpen(false)}
+          activeCell={lastActiveCellAddress}
+          onSolve={handleGoalSeek}
+        />
+      )}
 
       {/* 3. Subtotal Dialog */}
-      <SubtotalDialog
-        isOpen={isSubtotalOpen}
-        onClose={() => setIsSubtotalOpen(false)}
-        fields={dataFields}
-        onApply={handleSubtotal}
-      />
+      {activeDialog === "subtotal" && (
+        <SubtotalDialog
+          isOpen
+          onClose={() => setIsSubtotalOpen(false)}
+          fields={dataFields}
+          onApply={handleSubtotal}
+        />
+      )}
 
       {/* 4. Consolidate Dialog */}
-      <ConsolidateDialog
-        isOpen={isConsolidateOpen}
-        onClose={() => setIsConsolidateOpen(false)}
-        defaultRef={defaultRangeStr}
-        onConsolidate={handleConsolidate}
-      />
+      {activeDialog === "consolidate" && (
+        <ConsolidateDialog
+          isOpen
+          onClose={() => setIsConsolidateOpen(false)}
+          defaultRef={defaultRangeStr}
+          onConsolidate={handleConsolidate}
+        />
+      )}
 
       {/* 5. Advanced Filter Dialog */}
-      <AdvancedFilterDialog
-        isOpen={isAdvFilterOpen}
-        onClose={() => setIsAdvFilterOpen(false)}
-        fields={dataFields}
-        onApply={handleAdvancedFilter}
-      />
+      {activeDialog === "advanced-filter" && (
+        <AdvancedFilterDialog
+          isOpen
+          onClose={() => setIsAdvFilterOpen(false)}
+          fields={dataFields}
+          onApply={handleAdvancedFilter}
+        />
+      )}
 
       {/* 6. Custom Sort Dialog */}
-      <CustomSortDialog
-        isOpen={isCustomSortOpen}
-        onClose={() => setIsCustomSortOpen(false)}
-        fields={dataFields}
-        onSort={handleCustomSort}
-      />
+      {activeDialog === "custom-sort" && (
+        <CustomSortDialog
+          isOpen
+          onClose={() => setIsCustomSortOpen(false)}
+          fields={dataFields}
+          onSort={handleCustomSort}
+        />
+      )}
     </div>
   );
 }

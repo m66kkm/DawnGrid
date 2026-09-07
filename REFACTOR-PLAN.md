@@ -238,9 +238,35 @@ Univer 挂载真实 DOM canvas（`App.tsx:622` 的 `container: "univer-container
 | 命令处理器 | 需 ctx stub | **高**（契约测试） |
 
 **验证手段**
-- 每阶段 `npx tsc --noEmit` 通过（`bun run build` 会跑 `tsc && vite build`）
+- 每阶段 `./node_modules/.bin/tsc --noEmit -p tsconfig.json` 通过
+
+  **不要用 `npx tsc`** —— 本机 `npx tsc` 会解析到一个占位包，打印
+  "This is not the tsc command you are looking for" 并以退出码 1 结束，
+  而 rtk 包装器会把它显示成 "TypeScript: No errors found"。阶段 0 就是
+  这样漏掉了一个真实的类型错误。
+
 - 每阶段 `bun run test` 全绿
 - 每阶段结束手动回归：打开 `葛雯.xlsx`、切换单元格、开关若干对话框、
   执行一次保存
 - 阶段 1 与阶段 5 各做一次 DevTools Performance 录制，对比渲染次数与耗时
+
+---
+
+## 进度
+
+| 阶段 | 状态 | 提交 | 测试数 |
+|---|---|---|---|
+| 0a 目录重组 | 完成 | `e819e15` | 69 |
+| 0b 测试基建 | 完成 | `e819e15` | 69 |
+| 1 selection + view | 完成 | `1b8aba4` | 111 |
+| 2 对话框 | 待做 | | |
+| 3 document + chart | 待做 | | |
+| 4 命令层拆分 | 待做 | | |
+| 5 清理 | 待做 | | |
+
+**阶段 1 结论**：用户实测确认响应明显变快，验证了「React 全量重渲染是主要
+开销」这一假设。前期靠调度器探针反复排查未能定位到此处——探针只能测量
+JS 回调耗时，而 `syncSelectionState` 本身始终在 5ms 以内，开销全部在它
+触发的重渲染中。后续阶段按原计划推进。
+
 
