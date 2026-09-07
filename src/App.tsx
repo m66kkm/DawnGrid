@@ -86,6 +86,7 @@ import {
   type DialogId,
 } from "./store";
 import { RibbonContainer } from "./layout";
+import { usePageLayoutCommands } from "./view";
 import { NotificationDialog } from "./shared/NotificationDialog";
 import { useStableCallback } from "./shared/useStableCallback";
 import "./App.css";
@@ -1544,6 +1545,8 @@ export default function App() {
     syncSelectionState();
   }
 
+  const handlePageLayoutCommand = usePageLayoutCommands();
+
   // Handle commands dispatched from Ribbon
   async function handleRibbonCommand(cmd: string, ...args: any[]) {
     if (cmd === "insert-function-open" || cmd.startsWith("insert-function-open:")) {
@@ -1572,6 +1575,10 @@ export default function App() {
       syncSelectionState();
       return;
     }
+
+    // Domain handlers, tried before the switch. Each returns true when it owns the
+    // command, so the switch below only sees what is still inline here.
+    if (handlePageLayoutCommand(cmd, ctx)) return;
 
     try {
       switch (cmd) {
@@ -2096,71 +2103,6 @@ export default function App() {
         }
         case "timeline-open": {
           setStatus("已为日期列创建时间线筛选器");
-          break;
-        }
-
-        // ── 页面布局 (Page Layout) ──
-        case "page-layout:margins:normal":
-        case "page-layout:margins:wide":
-        case "page-layout:margins:narrow": {
-          const mode = cmd.split(":")[2];
-          setStatus(`页边距已更新为: ${mode === "normal" ? "普通" : mode === "wide" ? "宽" : "窄"}`);
-          break;
-        }
-        case "page-layout:orientation:portrait":
-        case "page-layout:orientation:landscape": {
-          const ori = cmd.split(":")[2];
-          setStatus(`页面方向已设为: ${ori === "landscape" ? "横向" : "纵向"}`);
-          break;
-        }
-        case "page-layout:size:A4": {
-          setStatus("页面大小已设为标准 A4 (210 × 297 mm)");
-          break;
-        }
-        case "page-layout:print-area:set": {
-          setStatus(`已将选区 ${range.getA1Notation()} 设置为打印区域`);
-          break;
-        }
-        case "page-layout:print-area:clear": {
-          setStatus("已清除打印区域");
-          break;
-        }
-        case "page-layout:breaks:insert": {
-          setStatus(`已在第 ${range.getRow() + 1} 行插入分页符`);
-          break;
-        }
-        case "page-layout:breaks:remove": {
-          setStatus("已删除当前位置分页符");
-          break;
-        }
-        case "page-layout:breaks:reset": {
-          setStatus("已重置所有人工分页符");
-          break;
-        }
-        case "page-layout:print-titles:first-row": {
-          setStatus("已设置首行作为打印标题顶端行重复");
-          break;
-        }
-        case "page-layout:print-titles:selection": {
-          setStatus(`已设置选区 ${range.getA1Notation()} 作为打印标题`);
-          break;
-        }
-        case "page-layout:print-titles:clear": {
-          setStatus("已清除打印标题设置");
-          break;
-        }
-        case "export-pdf": {
-          try {
-            const savePath = await save({
-              filters: [{ name: "PDF 文档", extensions: ["pdf"] }],
-              defaultPath: (metadata?.name.replace(/\.[^.]+$/, "") || "表格导出") + ".pdf",
-            });
-            if (savePath) {
-              setStatus(`已导出 PDF 至: ${savePath}`);
-            }
-          } catch (e) {
-            console.error(e);
-          }
           break;
         }
 
