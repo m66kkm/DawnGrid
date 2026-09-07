@@ -12,3 +12,4 @@ export * from './create-univer';
 export * from './univer-adapter';
 export * from './useCssTransitionMount';
 export * from './useStableCallback';
+export * from './NotificationDialog';

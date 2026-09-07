@@ -1912,3 +1912,64 @@ button.check-item:hover {
   }
 }
 
+
+/* ── Notification dialog (acknowledged messages) ── */
+/* Layers above the other dialogs: a notification can be raised from inside one. */
+.notification-backdrop {
+  z-index: 10100;
+}
+
+.notification-dialog {
+  width: 420px;
+  max-width: calc(100vw - 48px);
+}
+
+.notification-dialog .modal-header h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.notification-icon {
+  font-size: 15px;
+  line-height: 1;
+}
+
+.notification-dialog.error .notification-icon {
+  color: #cf222e;
+}
+
+.notification-dialog.warning .notification-icon {
+  color: #bf8700;
+}
+
+.notification-dialog.info .notification-icon {
+  color: #0969da;
+}
+
+.notification-dialog.success .notification-icon {
+  color: #1a7f37;
+}
+
+.notification-message {
+  margin: 0;
+  padding: 4px 0;
+  line-height: 1.6;
+  font-size: 13px;
+  color: #24292f;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Single-action dialog, so the button is centred rather than right-aligned.
+   .modal-actions carries only a margin-top, which leaves the button flush with
+   the window edge once the body's padding stops applying to it. */
+.notification-dialog .modal-actions {
+  justify-content: center;
+  margin: 0;
+  padding: 16px;
+}
+
+.notification-dialog .modal-actions .dialog-btn {
+  min-width: 88px;
+}

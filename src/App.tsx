@@ -80,11 +80,13 @@ import {
   useChartStore,
   useDialogStore,
   useDocumentStore,
+  useNotificationStore,
   useSelectionStore,
   useViewStore,
   type DialogId,
 } from "./store";
 import { RibbonContainer } from "./layout";
+import { NotificationDialog } from "./shared/NotificationDialog";
 import { useStableCallback } from "./shared/useStableCallback";
 import "./App.css";
 
@@ -305,7 +307,7 @@ export default function App() {
             const ws = wb?.getSheetBySheetId(targetSheet.id);
             const val = ws?.getRange(0, 0, 1, 1)?.getValue();
             if (val === null || val === undefined || val === "") {
-              const snap = (wb as any)?.getSnapshot?.()?.sheets?.[targetSheet.id];
+              const snap = (wb as any)?.save?.()?.sheets?.[targetSheet.id];
               const cData = snap?.cellData;
               if (!cData || Object.keys(cData).length === 0) {
                 needsLoad = true;
@@ -510,7 +512,7 @@ export default function App() {
     return { values: vals, rangeA1, sheetName, sheetId };
   }
 
-  function insertChartObject(chartKind: RecommendedKind, customTitle?: string): SheetVisual {
+  function insertChartObject(chartKind: RecommendedKind, customTitle?: string): SheetVisual | null {
     const data = extractActiveChartValues();
     const curWb = univerRef.current?.univerAPI.getActiveWorkbook();
     const curWs = curWb?.getActiveSheet();
@@ -539,34 +541,17 @@ export default function App() {
       setStatus(`已在当前工作表插入 ${KIND_NAMES[chartKind]?.zh || chartKind} (${data.rangeA1})`);
       return newChart;
     } catch (e: any) {
-      console.warn("Insert chart fallback:", e);
-      const fallbackData = [
-        ['季度', '销售额', '毛利润'],
-        ['第一季度', 450, 180],
-        ['第二季度', 620, 260],
-        ['第三季度', 510, 210],
-        ['第四季度', 730, 310],
-      ];
-      const newChart = buildChartVisual({
-        id: `chart-${Date.now()}`,
-        sheetId: effectiveSheetId,
-        sheetName: currentActiveName,
-        chartType: chartKind,
-        dataRange: 'A1:C5',
-        title: customTitle || '季度销售业绩与利润',
-        values: fallbackData,
-        initialPos: {
-          x: 100 + (visibleCharts.length % 5) * 25,
-          y: 60 + (visibleCharts.length % 5) * 25,
-          width: 520,
-          height: 340,
-        },
-      });
-      setCharts((prev) => [...prev, newChart]);
-      setActiveChartId(newChart.id);
-      setSelectedChart(true);
-      setStatus(`已插入 ${KIND_NAMES[chartKind]?.zh || chartKind}`);
-      return newChart;
+      // buildChartVisual rejects a selection it cannot chart — no numeric column,
+      // or more than 5000 cells. Substituting a hardcoded sample chart here used to
+      // hide that: the user got a plausible-looking chart of invented data, which
+      // then lost its values on save because it had no cell references behind it.
+      // Report the reason instead.
+      console.warn("Insert chart failed:", e);
+      const reason =
+        e?.message || `所选区域不适合生成 ${KIND_NAMES[chartKind]?.zh || chartKind}。`;
+      setStatus(reason);
+      useNotificationStore.getState().notifyError(reason, "无法插入图表");
+      return null;
     }
   }
 
@@ -2025,6 +2010,15 @@ export default function App() {
         case "recommended-charts-open": {
           const data = extractActiveChartValues();
           const reco = recommendCharts(data.values);
+          // recommendCharts returns null when the selection has no chartable
+          // numeric series. Opening the picker anyway showed its default layouts,
+          // inviting the user to pick a chart that could not then be built.
+          if (!reco) {
+            const reason = "所选区域需要至少包含一列有效数值才能推荐图表。请选择包含数字的数据区域。";
+            setStatus(reason);
+            useNotificationStore.getState().notifyError(reason, "无法推荐图表");
+            break;
+          }
           setRecommendedData(reco);
           setIsRecommendedChartsOpen(true);
           break;
@@ -2535,7 +2529,7 @@ export default function App() {
         }
         case "workbook-statistics": {
           try {
-            const snapshot = workbook.getSnapshot();
+            const snapshot = workbook.save();
             let cells = 0;
             let formulas = 0;
             const sheetsObj = (snapshot as any)?.sheets || {};
@@ -3580,6 +3574,9 @@ export default function App() {
           onSort={handleCustomSort}
         />
       )}
+      {/* Rendered last so it layers above any open dialog — a notification can be
+          raised from inside one. */}
+      <NotificationDialog />
     </div>
   );
 }

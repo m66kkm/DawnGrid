@@ -438,7 +438,7 @@ export async function saveWorkbookToDisk(
 
   // If opening from an existing file, ensure all LIVE worksheets have their cells populated
   if (currentMeta) {
-    const tempSnapshot = activeWorkbook.getSnapshot() as any
+    const tempSnapshot = activeWorkbook.save() as any
     for (const sheet of currentMeta.sheets) {
       if (liveSheetIds.has(sheet.id) && sheet.rowCount > 0) {
         const sData = tempSnapshot?.sheets?.[sheet.id]
@@ -452,7 +452,7 @@ export async function saveWorkbookToDisk(
     }
   }
 
-  const snapshot = activeWorkbook.getSnapshot() as any
+  const snapshot = activeWorkbook.save() as any
   if (!snapshot || !snapshot.sheets) {
     throw new Error('工作簿数据快照获取失败')
   }
@@ -694,25 +694,23 @@ export async function saveWorkbookToDisk(
           (!c.sheetId && (sheetOrder[0] === sheetId || sheetOrder.length === 1));
 
         if (matchesSheet) {
-          const primaryType = c.chart?.chartTypes?.[0] || '';
-          let chartType = 'column';
-          if (c.chart?.barDirection === 'bar' || primaryType === 'bar' || (primaryType === 'barChart' && c.chart?.barDirection === 'bar')) {
-            chartType = 'bar';
-          } else if (primaryType === 'pie' || primaryType === 'pieChart') {
-            chartType = 'pie';
-          } else if (primaryType === 'doughnut' || primaryType === 'doughnutChart') {
-            chartType = 'doughnut';
-          } else if (primaryType === 'line' || primaryType === 'lineChart') {
-            chartType = 'line';
-          } else if (primaryType === 'area' || primaryType === 'areaChart') {
-            chartType = 'area';
-          } else if (primaryType === 'scatter' || primaryType === 'scatterChart') {
-            chartType = 'scatter';
-          } else if (primaryType === 'radar' || primaryType === 'radarChart') {
-            chartType = 'radar';
-          } else {
-            chartType = 'column';
-          }
+          // chartTypes holds OOXML plot-area names ('barChart', 'pieChart', ...),
+          // set by CHART_KIND_TO_TYPES. Both column and bar charts map to
+          // 'barChart' and are told apart only by barDirection.
+          const primaryType = (c.chart?.chartTypes?.[0] || '').replace(/Chart$/, '');
+          const chartType =
+            primaryType === 'bar'
+              ? c.chart?.barDirection === 'bar'
+                ? 'bar'
+                : 'column'
+              : primaryType === 'pie' ||
+                  primaryType === 'doughnut' ||
+                  primaryType === 'line' ||
+                  primaryType === 'area' ||
+                  primaryType === 'scatter' ||
+                  primaryType === 'radar'
+                ? primaryType
+                : 'column';
 
           const isPieOrDoughnut = chartType === 'pie' || chartType === 'doughnut';
           const paletteColors = COLOR_PALETTES[c.chart?.palette || 'office'] || COLOR_PALETTES.office;

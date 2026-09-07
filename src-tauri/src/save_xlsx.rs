@@ -225,6 +225,19 @@ fn build_format(style: &SaveCellStyle) -> Format {
     fmt
 }
 
+/// Zero-based column index to its A1 letters (0 -> "A", 26 -> "AA").
+fn col_to_letters(mut col: u16) -> String {
+    let mut letters = String::new();
+    loop {
+        letters.insert(0, (b'A' + (col % 26) as u8) as char);
+        if col < 26 {
+            break;
+        }
+        col = col / 26 - 1;
+    }
+    letters
+}
+
 pub fn save_workbook_to_path(payload: &SaveWorkbookPayload) -> Result<(), String> {
     if payload.path.to_lowercase().ends_with(".csv") {
         return crate::csv_handler::save_csv_to_path(payload);
@@ -339,6 +352,22 @@ pub fn save_workbook_to_path(payload: &SaveWorkbookPayload) -> Result<(), String
         }
 
         // Insert charts belonging to this worksheet
+        //
+        // Charts reference cells; rust_xlsxwriter has no way to embed literal series
+        // data. A chart whose series carry only `values`/`categories` (no *_ref) —
+        // which happens when the chart was built from data not backed by a range —
+        // therefore has nothing to point at, and reopening the file shows zeroes.
+        // Stage that literal data into spare columns past the used range and
+        // reference it from there.
+        let mut staging_col: u16 = sheet_data
+            .cells
+            .iter()
+            .map(|c| c.c)
+            .max()
+            .map_or(0, |m| m.saturating_add(2));
+        let staging_start_col = staging_col;
+        let mut staged_any = false;
+
         for chart_data in &sheet_data.charts {
             let chart_type = match chart_data.chart_type.as_str() {
                 "pie" | "pieChart" => ChartType::Pie,
@@ -381,6 +410,59 @@ pub fn save_workbook_to_path(payload: &SaveWorkbookPayload) -> Result<(), String
                     _ => ChartType::Column,
                 },
             };
+
+            // Stage literal series data before building the chart: the chart borrows
+            // nothing from the worksheet, but the references it needs must exist as
+            // cells. Each series that lacks a *_ref gets a column here, and the
+            // per-series refs computed now are consumed when the series is added.
+            let sheet_ref_name = sheet_data.name.as_str();
+            let mut staged_values: Vec<Option<String>> = Vec::new();
+            let mut staged_categories: Option<String> = None;
+
+            for s in &chart_data.series {
+                let needs_values = s.values_ref.as_deref().map_or(true, |r| r.trim().is_empty())
+                    && !s.values.is_empty();
+                if needs_values {
+                    if let Some(ref name) = s.name {
+                        let _ = worksheet.write_string(0, staging_col, name.as_str());
+                    }
+                    for (i, v) in s.values.iter().enumerate() {
+                        let _ = worksheet.write_number((i + 1) as u32, staging_col, *v);
+                    }
+                    staged_values.push(Some(format!(
+                        "'{}'!${}${}:${}${}",
+                        sheet_ref_name,
+                        col_to_letters(staging_col),
+                        2,
+                        col_to_letters(staging_col),
+                        s.values.len() + 1
+                    )));
+                    staging_col = staging_col.saturating_add(1);
+                    staged_any = true;
+                } else {
+                    staged_values.push(None);
+                }
+            }
+
+            // Categories are shared across series, so stage the first non-empty set once.
+            if let Some(s) = chart_data.series.iter().find(|s| {
+                s.categories_ref.as_deref().map_or(true, |r| r.trim().is_empty())
+                    && !s.categories.is_empty()
+            }) {
+                for (i, c) in s.categories.iter().enumerate() {
+                    let _ = worksheet.write_string((i + 1) as u32, staging_col, c.as_str());
+                }
+                staged_categories = Some(format!(
+                    "'{}'!${}${}:${}${}",
+                    sheet_ref_name,
+                    col_to_letters(staging_col),
+                    2,
+                    col_to_letters(staging_col),
+                    s.categories.len() + 1
+                ));
+                staging_col = staging_col.saturating_add(1);
+                staged_any = true;
+            }
 
             let mut chart = Chart::new(chart_type);
             if let Some(ref title) = chart_data.title {
@@ -450,20 +532,28 @@ pub fn save_workbook_to_path(payload: &SaveWorkbookPayload) -> Result<(), String
                     }
                 }
 
-                // Categories: prioritize formula ref
-                if let Some(ref cat_ref) = s.categories_ref {
-                    let clean_ref = cat_ref.trim_start_matches('=');
-                    if !clean_ref.trim().is_empty() {
-                        series.set_categories(clean_ref);
-                    }
+                // Categories: prefer the caller's formula ref, else the staged copy.
+                let cat_ref_owned = s
+                    .categories_ref
+                    .as_deref()
+                    .map(|r| r.trim_start_matches('=').trim())
+                    .filter(|r| !r.is_empty())
+                    .map(str::to_string)
+                    .or_else(|| staged_categories.clone());
+                if let Some(ref cat_ref) = cat_ref_owned {
+                    series.set_categories(cat_ref.as_str());
                 }
 
-                // Values: prioritize formula ref
-                if let Some(ref val_ref) = s.values_ref {
-                    let clean_ref = val_ref.trim_start_matches('=');
-                    if !clean_ref.trim().is_empty() {
-                        series.set_values(clean_ref);
-                    }
+                // Values: prefer the caller's formula ref, else the staged copy.
+                let val_ref_owned = s
+                    .values_ref
+                    .as_deref()
+                    .map(|r| r.trim_start_matches('=').trim())
+                    .filter(|r| !r.is_empty())
+                    .map(str::to_string)
+                    .or_else(|| staged_values.get(s_idx).cloned().flatten());
+                if let Some(ref val_ref) = val_ref_owned {
+                    series.set_values(val_ref.as_str());
                 }
 
                 // Series solid fill color
@@ -567,6 +657,14 @@ pub fn save_workbook_to_path(payload: &SaveWorkbookPayload) -> Result<(), String
             let y_offset = (chart_data.y % 20.0) as u32;
 
             let _ = worksheet.insert_chart_with_offset(row, col, &chart, x_offset, y_offset);
+        }
+
+        // Hide the staging columns: they exist only to give charts something to
+        // reference and would otherwise show up as stray data next to the sheet.
+        if staged_any {
+            for c in staging_start_col..staging_col {
+                let _ = worksheet.set_column_hidden(c);
+            }
         }
 
         workbook.push_worksheet(worksheet);
