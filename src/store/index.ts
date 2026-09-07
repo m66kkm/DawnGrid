@@ -1,3 +1,5 @@
 export * from './selectionSlice'
 export * from './viewSlice'
 export * from './dialogSlice'
+export * from './documentSlice'
+export * from './chartSlice'

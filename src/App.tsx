@@ -43,7 +43,6 @@ import { AdvancedFilterDialog } from "./data/AdvancedFilterDialog";
 import { CustomSortDialog } from "./data/CustomSortDialog";
 import { NameManagerDialog } from "./formular/NameManagerDialog";
 import {
-  type DefinedNameRow,
   type WatchCellItem,
   applyAutoSum,
   createNamesFromSelection,
@@ -73,12 +72,18 @@ import {
   COLOR_PALETTES,
   type SheetVisual,
   type RecommendedKind,
-  type ChartRecommendations,
   type ChartStateEdit,
   type ChartVisualState,
 } from "./charts";
 import { toSelectionFormat } from "./shared/selection-format";
-import { useDialogStore, useSelectionStore, useViewStore, type DialogId } from "./store";
+import {
+  useChartStore,
+  useDialogStore,
+  useDocumentStore,
+  useSelectionStore,
+  useViewStore,
+  type DialogId,
+} from "./store";
 import { RibbonContainer } from "./layout";
 import { useStableCallback } from "./shared/useStableCallback";
 import "./App.css";
@@ -153,14 +158,22 @@ export default function App() {
   const univerRef = useRef<ReturnType<typeof createUniver> | null>(null);
   const currentMetaRef = useRef<WorkbookMetadata | null>(null);
   const loadedSheetIdsRef = useRef<Set<string>>(new Set());
-  const [currentFile, setCurrentFile] = useState<string | null>(null);
-  const currentFileRef = useRef<string | null>(null);
-  currentFileRef.current = currentFile;
   const handleSaveRef = useRef<() => Promise<void>>(() => Promise.resolve());
   const handleSaveAsRef = useRef<() => Promise<void>>(() => Promise.resolve());
-  const [metadata, setMetadata] = useState<WorkbookMetadata | null>(null);
-  const [status, setStatus] = useState<string>("就绪");
-  const [loading, setLoading] = useState<boolean>(false);
+
+  // Document state. Reads go through the store so unrelated updates (a status line
+  // change, say) no longer rebuild everything this component renders.
+  const currentFile = useDocumentStore((s) => s.currentFile);
+  const setCurrentFile = useDocumentStore((s) => s.setCurrentFile);
+  const metadata = useDocumentStore((s) => s.metadata);
+  const setMetadata = useDocumentStore((s) => s.setMetadata);
+  const status = useDocumentStore((s) => s.status);
+  const setStatus = useDocumentStore((s) => s.setStatus);
+  const loading = useDocumentStore((s) => s.loading);
+  const setLoading = useDocumentStore((s) => s.setLoading);
+  const definedNames = useDocumentStore((s) => s.definedNames);
+  const setDefinedNames = useDocumentStore((s) => s.setDefinedNames);
+  const setActiveSheetId = useDocumentStore((s) => s.setActiveSheetId);
 
   // Active cell selection format tracking — lives in the store so a cell click only
   // re-renders the components that read it, not this whole component.
@@ -215,9 +228,6 @@ export default function App() {
   const [diagnosticResult, setDiagnosticResult] = useState<string | null>(null);
 
   // Additional Tab Modal Dialog States
-  const [definedNames, setDefinedNames] = useState<DefinedNameRow[]>([
-    { name: "SalesData", ref: "=Sheet1!$A$1:$D$10", scope: "工作簿" },
-  ]);
   const [watchList, setWatchList] = useState<WatchCellItem[]>([]);
   const [headerFooterData, setHeaderFooterData] = useState<HeaderFooterData>({
     headerLeft: "",
@@ -256,36 +266,29 @@ export default function App() {
   const workbookProtected = useViewStore((s) => s.workbookProtected);
   const setWorkbookProtected = useViewStore((s) => s.setWorkbookProtected);
   const setCalcManual = useViewStore((s) => s.setCalcManual);
-  const [selectedChart, setSelectedChart] = useState(false);
-  const [charts, setCharts] = useState<SheetVisual[]>([]);
-  const chartsRef = useRef<SheetVisual[]>(charts);
-  chartsRef.current = charts;
-  const [activeChartId, setActiveChartId] = useState<string | null>(null);
-  const activeChartIdRef = useRef<string | null>(null);
-  activeChartIdRef.current = activeChartId;
 
-  const clearActiveChart = useCallback(() => {
-    if (activeChartIdRef.current !== null) {
-      setActiveChartId(null);
-      setSelectedChart(false);
-    }
-  }, []);
-  const clearActiveChartRef = useRef(clearActiveChart);
-  clearActiveChartRef.current = clearActiveChart;
+  // Chart state. The mirroring refs are gone: stable callbacks read the current
+  // value through useChartStore.getState() instead.
+  const selectedChart = useChartStore((s) => s.selectedChart);
+  const setSelectedChart = useChartStore((s) => s.setSelectedChart);
+  const charts = useChartStore((s) => s.charts);
+  const setCharts = useChartStore((s) => s.setCharts);
+  const activeChartId = useChartStore((s) => s.activeChartId);
+  const setActiveChartId = useChartStore((s) => s.setActiveChartId);
+  const recommendedData = useChartStore((s) => s.recommendedData);
+  const setRecommendedData = useChartStore((s) => s.setRecommendedData);
 
-  const [activeSheetId, setActiveSheetId] = useState<string>("sheet-1");
-  const activeSheetIdRef = useRef<string>("sheet-1");
+  const activeSheetId = useDocumentStore((s) => s.activeSheetId);
   const workbookSubRef = useRef<any>(null);
-  const [recommendedData, setRecommendedData] = useState<ChartRecommendations | null>(null);
 
   const handleActiveSheetSwitch = useCallback((sheetId: string) => {
     if (!sheetId) return;
-    if (activeSheetIdRef.current !== sheetId) {
+    if (useDocumentStore.getState().activeSheetId !== sheetId) {
       setActiveSheetId(sheetId);
-      activeSheetIdRef.current = sheetId;
+      useDocumentStore.getState().setActiveSheetId(sheetId);
     }
     // Deselect chart whenever sheet is switched
-    if (activeChartIdRef.current !== null) {
+    if (useChartStore.getState().activeChartId !== null) {
       setActiveChartId(null);
       setSelectedChart(false);
     }
@@ -395,7 +398,7 @@ export default function App() {
 
   useEffect(() => {
     if (activeChartId) {
-      const cur = chartsRef.current.find((c) => c.id === activeChartId);
+      const cur = useChartStore.getState().charts.find((c) => c.id === activeChartId);
       if (cur && cur.sheetId && cur.sheetId !== activeSheetId && cur.sheetId !== currentSheetName) {
         setActiveChartId(null);
         setSelectedChart(false);
@@ -511,7 +514,7 @@ export default function App() {
     const data = extractActiveChartValues();
     const curWb = univerRef.current?.univerAPI.getActiveWorkbook();
     const curWs = curWb?.getActiveSheet();
-    const currentActiveId = curWs?.getSheetId?.() || activeSheetIdRef.current || data.sheetId || 'sheet-1';
+    const currentActiveId = curWs?.getSheetId?.() || useDocumentStore.getState().activeSheetId || data.sheetId || 'sheet-1';
     const currentActiveName = curWs?.getSheetName?.() || data.sheetName || 'Sheet1';
     const effectiveSheetId = currentActiveId;
     try {
@@ -701,7 +704,7 @@ export default function App() {
       (runtime.univerAPI as any).Event?.SelectionChanged,
       () => {
         syncSelectionState();
-        clearActiveChartRef.current();
+        useChartStore.getState().clearActiveChart();
       }
     );
 
@@ -757,7 +760,7 @@ export default function App() {
         command?.id === "sheet.mutation.set-selections" ||
         command?.id === "sheet.operation.set-cell-edit-visible"
       ) {
-        clearActiveChartRef.current();
+        useChartStore.getState().clearActiveChart();
       }
 
       // 1. Handle sheet removal
@@ -892,7 +895,7 @@ export default function App() {
         const curWb = runtime.univerAPI.getActiveWorkbook();
         const curWs = curWb?.getActiveSheet();
         const curId = curWs?.getSheetId?.();
-        if (curId && curId !== activeSheetIdRef.current) {
+        if (curId && curId !== useDocumentStore.getState().activeSheetId) {
           handleActiveSheetSwitchRef.current(curId);
         }
       } catch {}
@@ -1016,7 +1019,7 @@ export default function App() {
       const activeSheet = meta.sheets[meta.activeTab] || meta.sheets[0];
       if (activeSheet) {
         setActiveSheetId(activeSheet.id);
-        activeSheetIdRef.current = activeSheet.id;
+        useDocumentStore.getState().setActiveSheetId(activeSheet.id);
         await loadWorksheetData(
           runtime,
           meta,
@@ -1059,7 +1062,7 @@ export default function App() {
     const runtime = univerRef.current;
     if (!runtime) return;
 
-    const fileToSave = currentFileRef.current;
+    const fileToSave = useDocumentStore.getState().currentFile;
     if (!fileToSave) {
       await handleSaveAs();
       return;
@@ -1074,7 +1077,7 @@ export default function App() {
         currentMetaRef.current,
         loadedSheetIdsRef.current,
         setStatus,
-        chartsRef.current,
+        useChartStore.getState().charts,
       );
       if (currentMetaRef.current) {
         setMetadata({ ...currentMetaRef.current });
@@ -1093,11 +1096,12 @@ export default function App() {
     if (!runtime) return;
 
     try {
-      const isCsvCurrent = currentFileRef.current?.toLowerCase().endsWith(".csv");
+      const currentPath = useDocumentStore.getState().currentFile;
+      const isCsvCurrent = currentPath?.toLowerCase().endsWith(".csv");
       const defaultName =
         currentMetaRef.current?.name ||
-        (currentFileRef.current
-          ? currentFileRef.current.split(/[/\\]/).pop()
+        (currentPath
+          ? currentPath.split(/[/\\]/).pop()
           : isCsvCurrent
           ? "表格导出.csv"
           : "表格导出.xlsx");
@@ -1125,10 +1129,10 @@ export default function App() {
           currentMetaRef.current,
           loadedSheetIdsRef.current,
           setStatus,
-          chartsRef.current,
+          useChartStore.getState().charts,
         );
         setCurrentFile(path);
-        currentFileRef.current = path;
+        useDocumentStore.getState().setCurrentFile(path);
         const fileName = path.split(/[/\\]/).pop() || path;
         if (currentMetaRef.current) {
           const updatedMeta = { ...currentMetaRef.current, name: fileName };
@@ -1150,11 +1154,10 @@ export default function App() {
     if (!runtime) return;
 
     try {
+      const currentPath = useDocumentStore.getState().currentFile;
       const baseName =
         currentMetaRef.current?.name?.replace(/\.[^.]+$/, "") ||
-        (currentFileRef.current
-          ? currentFileRef.current.split(/[/\\]/).pop()?.replace(/\.[^.]+$/, "")
-          : "表格导出");
+        (currentPath ? currentPath.split(/[/\\]/).pop()?.replace(/\.[^.]+$/, "") : "表格导出");
 
       const path = await save({
         filters: [
@@ -1179,10 +1182,10 @@ export default function App() {
           currentMetaRef.current,
           loadedSheetIdsRef.current,
           setStatus,
-          chartsRef.current,
+          useChartStore.getState().charts,
         );
         setCurrentFile(path);
-        currentFileRef.current = path;
+        useDocumentStore.getState().setCurrentFile(path);
         const fileName = path.split(/[/\\]/).pop() || path;
         if (currentMetaRef.current) {
           const updatedMeta = { ...currentMetaRef.current, name: fileName };
@@ -1228,7 +1231,7 @@ export default function App() {
     });
 
     setCurrentFile(null);
-    currentFileRef.current = null;
+    useDocumentStore.getState().setCurrentFile(null);
     setMetadata(null);
     currentMetaRef.current = null;
     loadedSheetIdsRef.current.clear();
@@ -1236,7 +1239,7 @@ export default function App() {
     setActiveChartId(null);
     setSelectedChart(false);
     setActiveSheetId("sheet-1");
-    activeSheetIdRef.current = "sheet-1";
+    useDocumentStore.getState().setActiveSheetId("sheet-1");
     attachWorkbookSheetListener(runtime.univerAPI.getActiveWorkbook());
     setStatus("已新建空白表格");
   }
@@ -3290,13 +3293,13 @@ export default function App() {
         className="univer-grid-wrapper"
         style={{ position: "relative" }}
         onMouseDown={() => {
-          clearActiveChartRef.current();
+          useChartStore.getState().clearActiveChart();
         }}
       >
         <div
           id="univer-container"
           onMouseDown={() => {
-            clearActiveChartRef.current();
+            useChartStore.getState().clearActiveChart();
           }}
         />
         <ChartOverlay
