@@ -30,3 +30,6 @@ target/
 # Tauri
 **/gen/schemas/
 
+# Generated release notes
+release_notes.md
+
