@@ -89,6 +89,7 @@ import {
 import { RibbonContainer } from "./layout";
 import { usePageLayoutCommands, useViewCommands } from "./view";
 import { useReviewCommands } from "./review";
+import { useAiCommands } from "./shared/useAiCommands";
 import { NotificationDialog } from "./shared/NotificationDialog";
 import { useStableCallback } from "./shared/useStableCallback";
 import "./App.css";
@@ -219,8 +220,9 @@ export default function App() {
   const [defaultRangeStr, setDefaultRangeStr] = useState<string>("A1");
 
   // AI & Diagnostic state
-  const [analysisSummary, setAnalysisSummary] = useState<string | null>(null);
-  const [diagnosticResult, setDiagnosticResult] = useState<string | null>(null);
+  const analysisSummary = useDialogStore((s) => s.analysisSummary);
+  const diagnosticResult = useDialogStore((s) => s.diagnosticResult);
+  const setDiagnosticResult = useDialogStore((s) => s.setDiagnosticResult);
 
   // Additional Tab Modal Dialog States
   const [watchList, setWatchList] = useState<WatchCellItem[]>([]);
@@ -1518,6 +1520,7 @@ export default function App() {
   const handlePageLayoutCommand = usePageLayoutCommands();
   const handleViewCommand = useViewCommands();
   const handleReviewCommand = useReviewCommands();
+  const handleAiCommand = useAiCommands(useStableCallback((c: string) => void handleRibbonCommand(c)));
 
   // Handle commands dispatched from Ribbon
   async function handleRibbonCommand(cmd: string, ...args: any[]) {
@@ -1553,6 +1556,7 @@ export default function App() {
     if (handlePageLayoutCommand(cmd, ctx)) return;
     if (handleViewCommand(cmd, ctx)) return;
     if (handleReviewCommand(cmd, ctx)) return;
+    if (handleAiCommand(cmd, ctx)) return;
 
     try {
       switch (cmd) {
@@ -2557,37 +2561,6 @@ export default function App() {
             );
             setStatus("已切换纵坐标轴标题");
           }
-          break;
-        }
-
-        // ── 智能 AI 助手 ──
-        case "ai-chat": {
-          setIsAiOpen(true);
-          break;
-        }
-        case "ai-check": {
-          handleRibbonCommand("error-checking");
-          setIsAiOpen(true);
-          break;
-        }
-        case "ai-analyze": {
-          const maxR = Math.min(100, worksheet.getMaxRows());
-          let numericCount = 0;
-          let sum = 0;
-          for (let r = 0; r < maxR; r++) {
-            for (let c = 0; c < 10; c++) {
-              const val = Number(worksheet.getRange(r, c, 1, 1).getValue());
-              if (!isNaN(val) && val !== 0) {
-                numericCount++;
-                sum += val;
-              }
-            }
-          }
-          const avg = numericCount > 0 ? (sum / numericCount).toFixed(2) : "0";
-          const summary = `当前工作表共统计 ${numericCount} 个有效数值单元格，数值总计 ${sum}，均值约 ${avg}。数据分布平稳，结构合规。`;
-          setAnalysisSummary(summary);
-          setStatus(summary);
-          setIsAiOpen(true);
           break;
         }
 

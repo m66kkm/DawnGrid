@@ -51,8 +51,12 @@ export interface DialogState {
   // command handler can populate a dialog and open it without App relaying props.
   allowEditRanges: AllowEditRangeItem[]
   workbookStats: WorkbookStats
+  analysisSummary: string | null
+  diagnosticResult: string | null
   setAllowEditRanges: (ranges: AllowEditRangeItem[]) => void
   setWorkbookStats: (stats: WorkbookStats) => void
+  setAnalysisSummary: (summary: string | null) => void
+  setDiagnosticResult: (result: string | null) => void
 }
 
 const EMPTY_STATS: WorkbookStats = {
@@ -73,6 +77,10 @@ export const useDialogStore = create<DialogState>((set, get) => ({
 
   allowEditRanges: [],
   workbookStats: EMPTY_STATS,
+  analysisSummary: null,
+  diagnosticResult: null,
   setAllowEditRanges: (ranges) => set({ allowEditRanges: ranges }),
   setWorkbookStats: (stats) => set({ workbookStats: stats }),
+  setAnalysisSummary: (summary) => set({ analysisSummary: summary }),
+  setDiagnosticResult: (result) => set({ diagnosticResult: result }),
 }))

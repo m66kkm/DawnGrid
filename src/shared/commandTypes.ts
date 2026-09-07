@@ -1,6 +1,4 @@
-import type { createUniver } from '../shared/create-univer'
-
-export type UniverRuntime = ReturnType<typeof createUniver>
+import type { UniverRuntime } from './create-univer'
 
 /**
  * The Univer handles every command handler resolves before running.

@@ -13,3 +13,5 @@ export * from './univer-adapter';
 export * from './useCssTransitionMount';
 export * from './useStableCallback';
 export * from './NotificationDialog';
+export * from './commandTypes';
+export * from './useAiCommands';
