@@ -61,12 +61,9 @@ import {
   applyChartStateEdit,
   transposeChartSeries,
   KIND_NAMES,
-  COLOR_PALETTES,
   columnLabel,
   type SheetVisual,
   type RecommendedKind,
-  type ChartStateEdit,
-  type ChartVisualState,
 } from "./charts";
 import { toSelectionFormat } from "./shared/selection-format";
 import {
@@ -83,6 +80,7 @@ import { useReviewCommands } from "./review";
 import { useFormulaCommands } from "./formular/useFormulaCommands";
 import { useInsertCommands } from "./insert/useInsertCommands";
 import { useDataCommands } from "./data/useDataCommands";
+import { useChartCommands } from "./charts/useChartCommands";
 import { useAiCommands } from "./shared/useAiCommands";
 import { NotificationDialog } from "./shared/NotificationDialog";
 import { useStableCallback } from "./shared/useStableCallback";
@@ -1468,6 +1466,12 @@ export default function App() {
   const handleViewCommand = useViewCommands();
   const handleReviewCommand = useReviewCommands();
   const handleFormulaCommand = useFormulaCommands(useStableCallback(() => syncSelectionState()));
+  const handleChartCommand = useChartCommands({
+    getTargetChart: useStableCallback((kind?: RecommendedKind) => getTargetChart(kind)),
+    insertChartObject: useStableCallback((kind: RecommendedKind, title?: string) =>
+      insertChartObject(kind, title),
+    ),
+  });
   const handleDataCommand = useDataCommands({
     getFieldsFromRange: useStableCallback((ws: any, r: any) => getFieldsFromRange(ws, r)),
   });
@@ -1514,6 +1518,7 @@ export default function App() {
     if (handleFormulaCommand(cmd, ctx, ...args)) return;
     if (handleInsertCommand(cmd, ctx)) return;
     if (handleDataCommand(cmd, ctx)) return;
+    if (handleChartCommand(cmd, ctx)) return;
     if (handleAiCommand(cmd, ctx)) return;
 
     try {
@@ -1942,247 +1947,9 @@ export default function App() {
           break;
         }
 
-        // ── 图表设计 (Chart Design) ──
-        case "activate-chart-tab": {
-          const target = getTargetChart();
-          if (target) {
-            setActiveChartId(target.id);
-            setSelectedChart(true);
-            setStatus(`已进入图表设计，当前图表: ${target.chart.title || KIND_NAMES[target.chart.chartTypes[0]?.replace('Chart', '') as RecommendedKind]?.zh || '图表'}`);
-          }
-          break;
-        }
-        case "chart-switch-row-col": {
-          const target = getTargetChart("column");
-          if (target) {
-            const seriesSet = transposeChartSeries(target.chart.series, (n) => `系列 ${n}`);
-            if (seriesSet) {
-              setCharts((prev) =>
-                prev.map((c) =>
-                  c.id === target.id ? { ...c, chart: applyChartStateEdit(c.chart, { seriesSet }) } : c
-                )
-              );
-              setStatus("图表数据源：已完成行/列互换 (Switch Row/Column)");
-            } else {
-              setStatus("当前图表暂无有效类别，无法互换行/列");
-            }
-          }
-          break;
-        }
-        case "chart-select-data": {
-          const target = getTargetChart("column");
-          if (target) {
-            setActiveChartId(target.id);
-            setSelectedChart(true);
-            setIsChartSelectDataOpen(true);
-          }
-          break;
-        }
-        case "chart-format-pane": {
-          const target = getTargetChart("column");
-          if (target) {
-            setActiveChartId(target.id);
-            setSelectedChart(true);
-            setIsChartFormatOpen(true);
-          }
-          break;
-        }
-        case "chart-delete": {
-          const target = getTargetChart();
-          if (target) {
-            setCharts((prev) => prev.filter((c) => c.id !== target.id));
-            setActiveChartId(null);
-            setSelectedChart(false);
-            setStatus("选中的图表对象已成功删除");
-          } else {
-            setStatus("当前无可用图表对象可删除");
-          }
-          break;
-        }
-        case "chart-type-column":
-        case "chart-type-bar":
-        case "chart-type-line":
-        case "chart-type-area":
-        case "chart-type-pie":
-        case "chart-type-doughnut": {
-          const kind = cmd.slice("chart-type-".length) as RecommendedKind;
-          const target = getTargetChart();
-          if (target) {
-            setCharts((prev) =>
-              prev.map((c) =>
-                c.id === target.id ? { ...c, chart: applyChartStateEdit(c.chart, { chartType: kind }) } : c
-              )
-            );
-            setStatus(`图表类型已转换为: ${KIND_NAMES[kind]?.zh || kind}`);
-          } else {
-            insertChartObject(kind);
-          }
-          break;
-        }
-        case "chart-element-title": {
-          const target = getTargetChart("column");
-          if (target) {
-            setCharts((prev) =>
-              prev.map((c) =>
-                c.id === target.id
-                  ? { ...c, chart: { ...c.chart, title: c.chart.title ? '' : '图表标题' } }
-                  : c
-              )
-            );
-            setStatus("已切换图表标题显示");
-          }
-          break;
-        }
-        case "chart-element-axis-cat": {
-          const target = getTargetChart("column");
-          if (target) {
-            setCharts((prev) =>
-              prev.map((c) =>
-                c.id === target.id
-                  ? {
-                      ...c,
-                      chart: {
-                        ...c.chart,
-                        axisTitles: {
-                          ...c.chart.axisTitles,
-                          category: c.chart.axisTitles?.category ? undefined : '类别轴标题',
-                        },
-                      },
-                    }
-                  : c
-              )
-            );
-            setStatus("已切换横坐标轴标题");
-          }
-          break;
-        }
-        case "chart-element-axis-val": {
-          const target = getTargetChart("column");
-          if (target) {
-            setCharts((prev) =>
-              prev.map((c) =>
-                c.id === target.id
-                  ? {
-                      ...c,
-                      chart: {
-                        ...c.chart,
-                        axisTitles: {
-                          ...c.chart.axisTitles,
-                          value: c.chart.axisTitles?.value ? undefined : '数值轴标题',
-                        },
-                      },
-                    }
-                  : c
-              )
-            );
-            setStatus("已切换纵坐标轴标题");
-          }
-          break;
-        }
-
         default: {
           // Dynamic prefix matching
-          if (cmd.startsWith("insert-chart:")) {
-            const chartKind = cmd.slice("insert-chart:".length) as RecommendedKind;
-            insertChartObject(chartKind);
-          } else if (cmd.startsWith("insert-pivot-chart:")) {
-            const chartKind = cmd.slice("insert-pivot-chart:".length) as RecommendedKind;
-            insertChartObject(chartKind, "数据透视图");
-          } else if (cmd.startsWith("chart-type:")) {
-            const chartType = cmd.slice("chart-type:".length) as RecommendedKind;
-            const target = getTargetChart();
-            if (target) {
-              setCharts((prev) =>
-                prev.map((c) =>
-                  c.id === target.id ? { ...c, chart: applyChartStateEdit(c.chart, { chartType }) } : c
-                )
-              );
-              setStatus(`图表类型已切换为: ${KIND_NAMES[chartType]?.zh || chartType}`);
-            } else {
-              insertChartObject(chartType);
-            }
-          } else if (cmd.startsWith("chart-labels:")) {
-            const dataLabels = cmd.slice("chart-labels:".length) as ChartVisualState['dataLabels'];
-            const target = getTargetChart("column");
-            if (target) {
-              setCharts((prev) =>
-                prev.map((c) =>
-                  c.id === target.id ? { ...c, chart: applyChartStateEdit(c.chart, { dataLabels }) } : c
-                )
-              );
-              setStatus(`已设置数据标签为: ${dataLabels === 'none' ? '无' : '数值'}`);
-            }
-          } else if (cmd.startsWith("chart-legend:")) {
-            const legend = cmd.slice("chart-legend:".length) as ChartVisualState['legend'];
-            const target = getTargetChart("column");
-            if (target) {
-              setCharts((prev) =>
-                prev.map((c) =>
-                  c.id === target.id ? { ...c, chart: applyChartStateEdit(c.chart, { legend }) } : c
-                )
-              );
-              setStatus(`已调整图例位置: ${legend === 'none' ? '无图例' : legend}`);
-            }
-          } else if (cmd.startsWith("chart-layout:")) {
-            const layoutIdx = cmd.slice("chart-layout:".length);
-            const target = getTargetChart("column");
-            if (target) {
-              let patch: ChartStateEdit = {};
-              if (layoutIdx === "1") patch = { legend: "right", dataLabels: "value", gridlines: true };
-              else if (layoutIdx === "2") patch = { legend: "top", dataLabels: "value", gridlines: true };
-              else if (layoutIdx === "3") patch = { legend: "bottom", dataLabels: "none", gridlines: true };
-              else if (layoutIdx === "4") patch = { legend: "none", dataLabels: "none", gridlines: false };
-              setCharts((prev) =>
-                prev.map((c) => (c.id === target.id ? { ...c, chart: applyChartStateEdit(c.chart, patch) } : c))
-              );
-              setStatus(`已应用快速图表布局: 样式 ${layoutIdx}`);
-            }
-          } else if (cmd.startsWith("chart-colors:")) {
-            const pal = cmd.slice("chart-colors:".length);
-            const colors = COLOR_PALETTES[pal] ?? COLOR_PALETTES.office;
-            const target = getTargetChart("column");
-            if (target) {
-              const seriesColors: Record<string, string> = {};
-              target.chart.series.forEach((_, idx) => {
-                seriesColors[String(idx)] = colors[idx % colors.length];
-              });
-              const pointColors: Record<string, Record<string, string>> = {};
-              if (
-                target.chart.chartTypes.includes('pieChart') ||
-                target.chart.chartTypes.includes('doughnutChart') ||
-                target.chart.series.length === 1
-              ) {
-                const ptMap: Record<string, string> = {};
-                const catCount = target.chart.series[0]?.categories?.length || target.chart.series[0]?.values?.length || 0;
-                for (let i = 0; i < catCount; i++) {
-                  ptMap[String(i)] = colors[i % colors.length];
-                }
-                pointColors['0'] = ptMap;
-              }
-              setCharts((prev) =>
-                prev.map((c) =>
-                  c.id === target.id
-                    ? { ...c, chart: applyChartStateEdit(c.chart, { seriesColors, pointColors, palette: pal }) }
-                    : c
-                )
-              );
-              setStatus(`已应用图表配色: ${pal}`);
-            }
-          } else if (cmd.startsWith("chart-grouping:")) {
-            const grouping = cmd.slice("chart-grouping:".length) as ChartStateEdit['grouping'];
-            const target = getTargetChart("column");
-            if (target) {
-              setCharts((prev) =>
-                prev.map((c) =>
-                  c.id === target.id ? { ...c, chart: applyChartStateEdit(c.chart, { grouping }) } : c
-                )
-              );
-              const groupName = grouping === 'clustered' ? '簇状' : grouping === 'stacked' ? '堆叠' : '百分比堆叠';
-              setStatus(`已设置图表堆叠方式: ${groupName}`);
-            }
-          } else if (cmd.startsWith("sparkline:")) {
-            setStatus(`已为选区 ${range.getA1Notation()} 创建迷你图 (${cmd.slice("sparkline:".length)})`);
-          } else if (cmd.startsWith("cell-style:")) {
+          if (cmd.startsWith("cell-style:")) {
             const styleName = cmd.slice("cell-style:".length);
             if (styleName.includes("accent1")) {
               range.setBackground("#D9E1F2");

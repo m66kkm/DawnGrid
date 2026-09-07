@@ -11,3 +11,4 @@ export * from './RecommendedChartsDialog';
 export * from './ChartSelectDataDialog';
 export * from './ChartFormatDialog';
 export * from './ChartOverlay';
+export * from './useChartCommands';
