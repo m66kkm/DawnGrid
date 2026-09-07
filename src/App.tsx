@@ -57,7 +57,6 @@ import {
   ChartSelectDataDialog,
   ChartFormatDialog,
   ChartOverlay,
-  recommendCharts,
   buildChartVisual,
   applyChartStateEdit,
   transposeChartSeries,
@@ -82,6 +81,7 @@ import { RibbonContainer } from "./layout";
 import { usePageLayoutCommands, useViewCommands } from "./view";
 import { useReviewCommands } from "./review";
 import { useFormulaCommands } from "./formular/useFormulaCommands";
+import { useInsertCommands } from "./insert/useInsertCommands";
 import { useAiCommands } from "./shared/useAiCommands";
 import { NotificationDialog } from "./shared/NotificationDialog";
 import { useStableCallback } from "./shared/useStableCallback";
@@ -210,8 +210,10 @@ export default function App() {
   const setInsertFuncCategory = useDialogStore((s) => s.setInsertFuncCategory);
 
   // Data Tab Modal Dialog States
-  const [dataFields, setDataFields] = useState<PivotField[]>([]);
-  const [defaultRangeStr, setDefaultRangeStr] = useState<string>("A1");
+  const dataFields = useDialogStore((s) => s.dataFields);
+  const setDataFields = useDialogStore((s) => s.setDataFields);
+  const defaultRangeStr = useDialogStore((s) => s.defaultRangeStr);
+  const setDefaultRangeStr = useDialogStore((s) => s.setDefaultRangeStr);
 
   // AI & Diagnostic state
   const analysisSummary = useDialogStore((s) => s.analysisSummary);
@@ -241,7 +243,6 @@ export default function App() {
   const activeChartId = useChartStore((s) => s.activeChartId);
   const setActiveChartId = useChartStore((s) => s.setActiveChartId);
   const recommendedData = useChartStore((s) => s.recommendedData);
-  const setRecommendedData = useChartStore((s) => s.setRecommendedData);
 
   const activeSheetId = useDocumentStore((s) => s.activeSheetId);
   const workbookSubRef = useRef<any>(null);
@@ -1511,6 +1512,10 @@ export default function App() {
   const handleViewCommand = useViewCommands();
   const handleReviewCommand = useReviewCommands();
   const handleFormulaCommand = useFormulaCommands(useStableCallback(() => syncSelectionState()));
+  const handleInsertCommand = useInsertCommands({
+    getFieldsFromRange: useStableCallback((ws: any, r: any) => getFieldsFromRange(ws, r)),
+    extractActiveChartValues: useStableCallback(() => extractActiveChartValues()),
+  });
   const handleAiCommand = useAiCommands(useStableCallback((c: string) => void handleRibbonCommand(c)));
 
   // Handle commands dispatched from Ribbon
@@ -1548,6 +1553,7 @@ export default function App() {
     if (handleViewCommand(cmd, ctx)) return;
     if (handleReviewCommand(cmd, ctx)) return;
     if (handleFormulaCommand(cmd, ctx, ...args)) return;
+    if (handleInsertCommand(cmd, ctx)) return;
     if (handleAiCommand(cmd, ctx)) return;
 
     try {
@@ -1973,106 +1979,6 @@ export default function App() {
             worksheet.setRowHeightsForced(range.getRow(), 1, 24);
             setStatus(`已取消隐藏第 ${range.getRow() + 1} 行`);
           } catch {}
-          break;
-        }
-
-        // ── 插入 (Insert) ──
-        case "pivot-edit": {
-          const fields = getFieldsFromRange(worksheet, range);
-          setDataFields(fields);
-          setDefaultRangeStr(range.getA1Notation());
-          setIsPivotOpen(true);
-          break;
-        }
-        case "recommended-charts-open": {
-          const data = extractActiveChartValues();
-          const reco = recommendCharts(data.values);
-          // recommendCharts returns null when the selection has no chartable
-          // numeric series. Opening the picker anyway showed its default layouts,
-          // inviting the user to pick a chart that could not then be built.
-          if (!reco) {
-            const reason = "所选区域需要至少包含一列有效数值才能推荐图表。请选择包含数字的数据区域。";
-            setStatus(reason);
-            useNotificationStore.getState().notifyError(reason, "无法推荐图表");
-            break;
-          }
-          setRecommendedData(reco);
-          setIsRecommendedChartsOpen(true);
-          break;
-        }
-        case "insert-picture": {
-          try {
-            const selected = await open({
-              multiple: false,
-              filters: [{ name: "图片文件", extensions: ["png", "jpg", "jpeg", "webp", "gif", "svg"] }],
-            });
-            if (selected && typeof selected === "string") {
-              const fileName = selected.split(/[/\\]/).pop();
-              range.setValue(`[图片: ${fileName}]`);
-              setStatus(`已在单元格插入图片引用: ${fileName}`);
-            }
-          } catch (e) {
-            console.error(e);
-          }
-          break;
-        }
-        case "insert-icons": {
-          range.setValue("⭐");
-          setStatus("已在当前单元格插入图标: ⭐");
-          break;
-        }
-        case "insert-screenshot": {
-          setStatus("已截取当前屏幕画面并嵌入工作表");
-          break;
-        }
-        case "insert-checkbox": {
-          try {
-            const rule = (runtime.univerAPI as any).newDataValidation().requireCheckbox().build();
-            range.setDataValidation(rule);
-            setStatus("已插入交互式复选框");
-          } catch {
-            range.setValue("☐");
-            setStatus("已插入复选框");
-          }
-          break;
-        }
-        case "insert-textbox": {
-          range.setValue("请输入文本内容...");
-          range.setFontStyle("italic");
-          setStatus("已插入文本框");
-          break;
-        }
-        case "link-open": {
-          const currentVal = String(range.getValue() || "https://genspark.ai");
-          const url = window.prompt("请输入要插入的超链接 URL:", currentVal);
-          if (url) {
-            range.setValue(url);
-            range.setFontColor("#0563C1");
-            range.setFontLine("underline");
-            setStatus(`已插入超链接: ${url}`);
-          }
-          break;
-        }
-        case "header-footer-open": {
-          setIsHeaderFooterOpen(true);
-          break;
-        }
-        case "insert-equation": {
-          range.setValue("f(x) = a0 + ∑(an·cos(nπx/L) + bn·sin(nπx/L))");
-          range.setFontStyle("italic");
-          setStatus("已插入数学公式");
-          break;
-        }
-        case "insert-symbol": {
-          setIsSymbolOpen(true);
-          break;
-        }
-        case "slicer-open": {
-          setStatus(`已为当前选区 ${range.getA1Notation()} 生成交互式数据切片器`);
-          break;
-        }
-        case "timeline-open": {
-          setStatus("已为日期列创建时间线筛选器");
           break;
         }
 

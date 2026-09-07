@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { AllowEditRangeItem } from '../review/AllowEditRangesDialog'
+import type { PivotField } from '../insert/PivotDialog'
 
 export interface WorkbookStats {
   sheetCount: number
@@ -54,11 +55,17 @@ export interface DialogState {
   analysisSummary: string | null
   diagnosticResult: string | null
   insertFuncCategory: string
+  /** Column fields of the current selection, shared by the pivot, subtotal,
+   *  filter and sort dialogs. */
+  dataFields: PivotField[]
+  defaultRangeStr: string
   setAllowEditRanges: (ranges: AllowEditRangeItem[]) => void
   setWorkbookStats: (stats: WorkbookStats) => void
   setAnalysisSummary: (summary: string | null) => void
   setDiagnosticResult: (result: string | null) => void
   setInsertFuncCategory: (category: string) => void
+  setDataFields: (fields: PivotField[]) => void
+  setDefaultRangeStr: (ref: string) => void
 }
 
 const EMPTY_STATS: WorkbookStats = {
@@ -82,9 +89,13 @@ export const useDialogStore = create<DialogState>((set, get) => ({
   analysisSummary: null,
   diagnosticResult: null,
   insertFuncCategory: 'Common',
+  dataFields: [],
+  defaultRangeStr: 'A1',
   setAllowEditRanges: (ranges) => set({ allowEditRanges: ranges }),
   setWorkbookStats: (stats) => set({ workbookStats: stats }),
   setAnalysisSummary: (summary) => set({ analysisSummary: summary }),
   setDiagnosticResult: (result) => set({ diagnosticResult: result }),
   setInsertFuncCategory: (category) => set({ insertFuncCategory: category }),
+  setDataFields: (fields) => set({ dataFields: fields }),
+  setDefaultRangeStr: (ref) => set({ defaultRangeStr: ref }),
 }))
