@@ -82,9 +82,11 @@ import { usePageLayoutCommands, useViewCommands } from "./view";
 import { useReviewCommands } from "./review";
 import { useFormulaCommands } from "./formular/useFormulaCommands";
 import { useInsertCommands } from "./insert/useInsertCommands";
+import { useDataCommands } from "./data/useDataCommands";
 import { useAiCommands } from "./shared/useAiCommands";
 import { NotificationDialog } from "./shared/NotificationDialog";
 import { useStableCallback } from "./shared/useStableCallback";
+import { setRowHeightsBatched } from "./shared/rowHeights";
 import "./App.css";
 
 function parseA1Notation(a1: string): { row: number; col: number } | null {
@@ -97,50 +99,6 @@ function parseA1Notation(a1: string): { row: number; col: number } | null {
     colIndex = colIndex * 26 + (colLetters.charCodeAt(i) - 64);
   }
   return { row: Math.max(0, rowNumber), col: Math.max(0, colIndex - 1) };
-}
-
-/**
- * Sets an explicit height on a set of rows using a single command.
- *
- * The facade's per-row setters each dispatch a synchronous command, so applying N
- * rows costs N command round-trips and can block the main thread for seconds.
- * SetRowHeightCommand accepts a ranges array, so scattered rows (e.g. filter
- * results) are collapsed into contiguous runs and applied in one dispatch.
- */
-function setRowHeightsBatched(
-  univerAPI: any,
-  unitId: string,
-  subUnitId: string,
-  columnCount: number,
-  rows: number[],
-  height: number,
-): void {
-  if (rows.length === 0) return;
-  const sorted = [...new Set(rows)].sort((a, b) => a - b);
-  const ranges: Array<{ startRow: number; endRow: number; startColumn: number; endColumn: number }> = [];
-  let runStart = sorted[0];
-  let runEnd = sorted[0];
-  for (let i = 1; i < sorted.length; i++) {
-    if (sorted[i] === runEnd + 1) {
-      runEnd = sorted[i];
-      continue;
-    }
-    ranges.push({ startRow: runStart, endRow: runEnd, startColumn: 0, endColumn: columnCount - 1 });
-    runStart = sorted[i];
-    runEnd = sorted[i];
-  }
-  ranges.push({ startRow: runStart, endRow: runEnd, startColumn: 0, endColumn: columnCount - 1 });
-
-  try {
-    void univerAPI.executeCommand("sheet.command.set-row-height", {
-      unitId,
-      subUnitId,
-      ranges,
-      value: height,
-    });
-  } catch {
-    // ignore row height errors
-  }
 }
 
 export default function App() {
@@ -211,9 +169,7 @@ export default function App() {
 
   // Data Tab Modal Dialog States
   const dataFields = useDialogStore((s) => s.dataFields);
-  const setDataFields = useDialogStore((s) => s.setDataFields);
   const defaultRangeStr = useDialogStore((s) => s.defaultRangeStr);
-  const setDefaultRangeStr = useDialogStore((s) => s.setDefaultRangeStr);
 
   // AI & Diagnostic state
   const analysisSummary = useDialogStore((s) => s.analysisSummary);
@@ -1512,6 +1468,9 @@ export default function App() {
   const handleViewCommand = useViewCommands();
   const handleReviewCommand = useReviewCommands();
   const handleFormulaCommand = useFormulaCommands(useStableCallback(() => syncSelectionState()));
+  const handleDataCommand = useDataCommands({
+    getFieldsFromRange: useStableCallback((ws: any, r: any) => getFieldsFromRange(ws, r)),
+  });
   const handleInsertCommand = useInsertCommands({
     getFieldsFromRange: useStableCallback((ws: any, r: any) => getFieldsFromRange(ws, r)),
     extractActiveChartValues: useStableCallback(() => extractActiveChartValues()),
@@ -1529,7 +1488,7 @@ export default function App() {
 
     const ctx = getTargetRange();
     if (!ctx) return;
-    const { runtime, workbook, worksheet, range } = ctx;
+    const { runtime, worksheet, range } = ctx;
 
     if (cmd === "autofn" || cmd.startsWith("autofn:")) {
       const fn = cmd.includes(":") ? cmd.split(":")[1] : (args[0] || "SUM");
@@ -1554,6 +1513,7 @@ export default function App() {
     if (handleReviewCommand(cmd, ctx)) return;
     if (handleFormulaCommand(cmd, ctx, ...args)) return;
     if (handleInsertCommand(cmd, ctx)) return;
+    if (handleDataCommand(cmd, ctx)) return;
     if (handleAiCommand(cmd, ctx)) return;
 
     try {
@@ -1979,259 +1939,6 @@ export default function App() {
             worksheet.setRowHeightsForced(range.getRow(), 1, 24);
             setStatus(`已取消隐藏第 ${range.getRow() + 1} 行`);
           } catch {}
-          break;
-        }
-
-        // ── Data (完全与 GenOffice 一致的 6 大模块) ──
-        // 1. Pivot Table
-        case "pivot-open": {
-          const fields = getFieldsFromRange(worksheet, range);
-          setDataFields(fields);
-          setDefaultRangeStr(range.getA1Notation());
-          setIsPivotOpen(true);
-          break;
-        }
-        case "pivot-refresh": {
-          setStatus("当前数据透视表已刷新联动");
-          break;
-        }
-
-        // 2. Get Data
-        case "import-csv": {
-          try {
-            const selected = await open({
-              multiple: false,
-              filters: [{ name: "文本 / CSV 文件", extensions: ["csv", "txt", "tsv"] }],
-            });
-            if (selected && typeof selected === "string") {
-              setStatus(`已导入数据文件: ${selected.split(/[/\\]/).pop()}`);
-            }
-          } catch (e) {
-            console.error(e);
-          }
-          break;
-        }
-        case "merge-workbooks": {
-          try {
-            const selected = await open({
-              multiple: false,
-              filters: [{ name: "Excel 工作簿", extensions: ["xlsx", "xlsm"] }],
-            });
-            if (selected && typeof selected === "string") {
-              setStatus(`已合并工作簿数据: ${selected.split(/[/\\]/).pop()}`);
-            }
-          } catch (e) {
-            console.error(e);
-          }
-          break;
-        }
-        case "refresh-all": {
-          setStatus("全部外部数据源与透视表已刷新完毕");
-          break;
-        }
-
-        // 3. Sort & Filter
-        case "sort:asc": {
-          range.sort({ column: 0, ascending: true });
-          setStatus("已按升序排列选区");
-          break;
-        }
-        case "sort:desc": {
-          range.sort({ column: 0, ascending: false });
-          setStatus("已按降序排列选区");
-          break;
-        }
-        case "sort-custom-open": {
-          const fields = getFieldsFromRange(worksheet, range);
-          setDataFields(fields);
-          setIsCustomSortOpen(true);
-          break;
-        }
-        case "filter-toggle": {
-          try {
-            const existing = (worksheet as any).getFilter?.();
-            if (existing) {
-              existing.remove();
-              setStatus("已关闭数据筛选");
-            } else {
-              (range as any).createFilter?.();
-              setStatus("已在选区开启数据筛选");
-            }
-          } catch {
-            void runtime.univerAPI.executeCommand("sheet.command.smart-toggle-filter");
-            setStatus("已切换数据筛选状态");
-          }
-          break;
-        }
-        case "filter-clear": {
-          try {
-            void runtime.univerAPI.executeCommand("sheet.command.clear-filter-criteria");
-            const maxR = Math.min(100, worksheet.getMaxRows());
-            const hidden: number[] = [];
-            for (let r = 0; r < maxR; r++) {
-              if (worksheet.getRowHeight(r) === 0) {
-                hidden.push(r);
-              }
-            }
-            setRowHeightsBatched(
-              runtime.univerAPI,
-              workbook.getId(),
-              worksheet.getSheetId(),
-              worksheet.getMaxColumns(),
-              hidden,
-              24,
-            );
-            setStatus("已清除所有筛选条件");
-          } catch {
-            setStatus("筛选条件已清除");
-          }
-          break;
-        }
-        case "filter-reapply": {
-          void runtime.univerAPI.executeCommand("sheet.command.re-calc-filter");
-          setStatus("已重新计算并应用筛选");
-          break;
-        }
-        case "filter-advanced": {
-          const fields = getFieldsFromRange(worksheet, range);
-          setDataFields(fields);
-          setIsAdvFilterOpen(true);
-          break;
-        }
-
-        // 4. Data Tools
-        case "text-to-columns:1":
-        case "text-to-columns:2":
-        case "text-to-columns:4":
-        case "text-to-columns:8": {
-          const delimCode = Number(cmd.split(":")[1]);
-          const delimChar = delimCode === 2 ? "," : delimCode === 4 ? ";" : delimCode === 8 ? " " : "\t";
-          const startRow = range.getRow();
-          const height = range.getHeight();
-          const col = range.getColumn();
-          let splitRows = 0;
-
-          for (let r = 0; r < height; r++) {
-            const cell = worksheet.getRange(startRow + r, col, 1, 1);
-            const text = String(cell.getValue() ?? "");
-            if (text.includes(delimChar)) {
-              const parts = text.split(delimChar);
-              parts.forEach((part, idx) => {
-                worksheet.getRange(startRow + r, col + idx, 1, 1).setValue(part.trim());
-              });
-              splitRows++;
-            }
-          }
-          setStatus(`分列完成：已对 ${splitRows} 行数据按 "${delimChar === " " ? "空格" : delimChar}" 拆分至相邻列`);
-          break;
-        }
-        case "flash-fill": {
-          void runtime.univerAPI.executeCommand("sheet.command.copy-down");
-          setStatus("快速填充完成");
-          break;
-        }
-        case "remove-duplicates-open": {
-          const startRow = range.getRow();
-          const height = range.getHeight();
-          const width = range.getWidth();
-          const startCol = range.getColumn();
-          const seen = new Set<string>();
-          const rowsToDelete: number[] = [];
-
-          for (let r = 0; r < height; r++) {
-            const rowIdx = startRow + r;
-            const rowValues: string[] = [];
-            for (let c = 0; c < width; c++) {
-              rowValues.push(String(worksheet.getRange(rowIdx, startCol + c, 1, 1).getValue() ?? ""));
-            }
-            const rowKey = rowValues.join("||");
-            if (seen.has(rowKey)) {
-              rowsToDelete.push(rowIdx);
-            } else {
-              seen.add(rowKey);
-            }
-          }
-
-          for (let i = rowsToDelete.length - 1; i >= 0; i--) {
-            worksheet.deleteRows(rowsToDelete[i], 1);
-          }
-          setStatus(rowsToDelete.length > 0 ? `已清除 ${rowsToDelete.length} 行重复数据` : "选区未发现重复项");
-          break;
-        }
-        case "dv-open": {
-          void runtime.univerAPI.executeCommand("sheet.command.open-data-validation-panel");
-          setStatus("已打开数据验证面板");
-          break;
-        }
-        case "consolidate-open": {
-          setDefaultRangeStr(range.getA1Notation());
-          setIsConsolidateOpen(true);
-          break;
-        }
-
-        // 5. Forecast
-        case "goal-seek-open": {
-          setIsGoalSeekOpen(true);
-          break;
-        }
-
-        // 6. Outline
-        case "outline-group:rows": {
-          setStatus(`已将第 ${range.getRow() + 1} 至 ${range.getRow() + range.getHeight()} 行设置为分级组合`);
-          break;
-        }
-        case "outline-group:cols": {
-          setStatus(`已将第 ${columnLabel(range.getColumn())} 至 ${columnLabel(range.getColumn() + range.getWidth() - 1)} 列设置为分级组合`);
-          break;
-        }
-        case "outline-ungroup:rows": {
-          setStatus("已取消行分级组合");
-          break;
-        }
-        case "outline-ungroup:cols": {
-          setStatus("已取消列分级组合");
-          break;
-        }
-        case "outline-hide-detail:rows": {
-          const startR = range.getRow();
-          const h = range.getHeight();
-          if (h > 1) {
-            worksheet.setRowHeightsForced(startR + 1, h - 1, 0);
-          }
-          setStatus("已折叠隐藏明细行");
-          break;
-        }
-        case "outline-hide-detail:cols": {
-          const startC = range.getColumn();
-          const w = range.getWidth();
-          for (let c = 1; c < w; c++) {
-            worksheet.setColumnWidth(startC + c, 0);
-          }
-          setStatus("已折叠隐藏明细列");
-          break;
-        }
-        case "outline-show-detail:rows": {
-          const startR = range.getRow();
-          const h = range.getHeight();
-          if (h > 0) {
-            worksheet.setRowHeightsForced(startR, h, 24);
-          }
-          setStatus("已展开显示明细行");
-          break;
-        }
-        case "outline-show-detail:cols": {
-          const startC = range.getColumn();
-          const w = range.getWidth();
-          for (let c = 0; c < w; c++) {
-            worksheet.setColumnWidth(startC + c, 80);
-          }
-          setStatus("已展开显示明细列");
-          break;
-        }
-        case "subtotal-open": {
-          const fields = getFieldsFromRange(worksheet, range);
-          setDataFields(fields);
-          setIsSubtotalOpen(true);
           break;
         }
 

@@ -15,3 +15,4 @@ export * from './useStableCallback';
 export * from './NotificationDialog';
 export * from './commandTypes';
 export * from './useAiCommands';
+export * from './rowHeights';
