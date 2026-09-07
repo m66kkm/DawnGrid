@@ -78,7 +78,7 @@ import {
   type ChartStateEdit,
   type ChartVisualState,
 } from "./charts";
-import { type SelectionFormat, toSelectionFormat } from "./selection-format";
+import { type SelectionFormat, isSameSelectionFormat, toSelectionFormat } from "./selection-format";
 import "./App.css";
 
 function getColumnName(colIndex: number): string {
@@ -101,6 +101,50 @@ function parseA1Notation(a1: string): { row: number; col: number } | null {
     colIndex = colIndex * 26 + (colLetters.charCodeAt(i) - 64);
   }
   return { row: Math.max(0, rowNumber), col: Math.max(0, colIndex - 1) };
+}
+
+/**
+ * Sets an explicit height on a set of rows using a single command.
+ *
+ * The facade's per-row setters each dispatch a synchronous command, so applying N
+ * rows costs N command round-trips and can block the main thread for seconds.
+ * SetRowHeightCommand accepts a ranges array, so scattered rows (e.g. filter
+ * results) are collapsed into contiguous runs and applied in one dispatch.
+ */
+function setRowHeightsBatched(
+  univerAPI: any,
+  unitId: string,
+  subUnitId: string,
+  columnCount: number,
+  rows: number[],
+  height: number,
+): void {
+  if (rows.length === 0) return;
+  const sorted = [...new Set(rows)].sort((a, b) => a - b);
+  const ranges: Array<{ startRow: number; endRow: number; startColumn: number; endColumn: number }> = [];
+  let runStart = sorted[0];
+  let runEnd = sorted[0];
+  for (let i = 1; i < sorted.length; i++) {
+    if (sorted[i] === runEnd + 1) {
+      runEnd = sorted[i];
+      continue;
+    }
+    ranges.push({ startRow: runStart, endRow: runEnd, startColumn: 0, endColumn: columnCount - 1 });
+    runStart = sorted[i];
+    runEnd = sorted[i];
+  }
+  ranges.push({ startRow: runStart, endRow: runEnd, startColumn: 0, endColumn: columnCount - 1 });
+
+  try {
+    void univerAPI.executeCommand("sheet.command.set-row-height", {
+      unitId,
+      subUnitId,
+      ranges,
+      value: height,
+    });
+  } catch {
+    // ignore row height errors
+  }
 }
 
 export default function App() {
@@ -528,14 +572,31 @@ export default function App() {
         }
       } catch {}
       const fmt = toSelectionFormat(style, numFmt);
-      setSelectionFormat(fmt);
+      // toSelectionFormat always builds a fresh object, so setting it unconditionally
+      // re-renders this whole component on every command — and a single click fans out
+      // into ~11 commands. Only publish when the format actually changed.
+      setSelectionFormat((prev) => (isSameSelectionFormat(prev, fmt) ? prev : fmt));
 
       const r = ctx.range.getRow();
       const c = ctx.range.getColumn();
-      setLastActiveCellAddress(`${getColumnName(c)}${r + 1}`);
+      const addr = `${getColumnName(c)}${r + 1}`;
+      setLastActiveCellAddress((prev) => (prev === addr ? prev : addr));
     } catch (e) {
       console.warn("syncSelectionState error:", e);
     }
+  }
+
+  // A single click fans out into ~11 Univer commands, and running the full sync for
+  // each one re-reads the selection and re-renders this component 11 times over.
+  // Coalesce a burst into one sync on the next frame — the selection state only needs
+  // to reflect where the burst ended up.
+  const selectionSyncFrameRef = useRef<number | null>(null);
+  function scheduleSelectionSync() {
+    if (selectionSyncFrameRef.current !== null) return;
+    selectionSyncFrameRef.current = requestAnimationFrame(() => {
+      selectionSyncFrameRef.current = null;
+      syncSelectionState();
+    });
   }
 
   useEffect(() => {
@@ -660,7 +721,7 @@ export default function App() {
     );
 
     const subCommand = (runtime.univerAPI as any).onCommandExecuted?.((command: any) => {
-      syncSelectionState();
+      scheduleSelectionSync();
 
       // Clear chart selection when user changes worksheet selection / edits cells
       if (
@@ -832,6 +893,10 @@ export default function App() {
     }, 200);
 
     return () => {
+      if (selectionSyncFrameRef.current !== null) {
+        cancelAnimationFrame(selectionSyncFrameRef.current);
+        selectionSyncFrameRef.current = null;
+      }
       subWbCreated?.dispose?.();
       subSelection?.dispose?.();
       subSheet?.dispose?.();
@@ -1410,7 +1475,7 @@ export default function App() {
   function handleAdvancedFilter(colIdx: number, op1: string, val1: string, logic: "AND" | "OR", op2?: string, val2?: string) {
     const ctx = getTargetRange();
     if (!ctx) return;
-    const { worksheet, range } = ctx;
+    const { runtime, workbook, worksheet, range } = ctx;
     const startRow = range.getRow();
     const height = range.getHeight();
     let hiddenCount = 0;
@@ -1431,6 +1496,8 @@ export default function App() {
       }
     };
 
+    const rowsToHide: number[] = [];
+    const rowsToShow: number[] = [];
     for (let r = 1; r < height; r++) {
       const rowIdx = startRow + r;
       const cellValue = String(worksheet.getRange(rowIdx, colIdx, 1, 1).getValue() ?? "");
@@ -1439,12 +1506,17 @@ export default function App() {
       const matches = op2 && val2 ? (logic === "AND" ? (match1 && match2) : (match1 || match2)) : match1;
 
       if (!matches) {
-        worksheet.setRowHeight(rowIdx, 0);
+        rowsToHide.push(rowIdx);
         hiddenCount++;
       } else {
-        worksheet.setRowHeight(rowIdx, 24);
+        rowsToShow.push(rowIdx);
       }
     }
+    const unitId = workbook.getId();
+    const subUnitId = worksheet.getSheetId();
+    const colCount = worksheet.getMaxColumns();
+    setRowHeightsBatched(runtime.univerAPI, unitId, subUnitId, colCount, rowsToHide, 0);
+    setRowHeightsBatched(runtime.univerAPI, unitId, subUnitId, colCount, rowsToShow, 24);
     setStatus(`高级筛选生效：已隐藏 ${hiddenCount} 行不符合条件的数据`);
   }
 
@@ -1863,7 +1935,7 @@ export default function App() {
           const curH = worksheet.getRowHeight(range.getRow()) || 24;
           const newH = window.prompt("设置行高 (pt):", String(curH));
           if (newH && !isNaN(Number(newH))) {
-            worksheet.setRowHeight(range.getRow(), Number(newH));
+            worksheet.setRowHeightsForced(range.getRow(), 1, Number(newH));
             setStatus(`第 ${range.getRow() + 1} 行行高已设为: ${newH}pt`);
           }
           break;
@@ -1899,14 +1971,14 @@ export default function App() {
         }
         case "hide-row": {
           try {
-            worksheet.setRowHeight(range.getRow(), 0);
+            worksheet.setRowHeightsForced(range.getRow(), 1, 0);
             setStatus(`已隐藏第 ${range.getRow() + 1} 行`);
           } catch {}
           break;
         }
         case "unhide-row": {
           try {
-            worksheet.setRowHeight(range.getRow(), 24);
+            worksheet.setRowHeightsForced(range.getRow(), 1, 24);
             setStatus(`已取消隐藏第 ${range.getRow() + 1} 行`);
           } catch {}
           break;
@@ -2242,11 +2314,20 @@ export default function App() {
           try {
             void runtime.univerAPI.executeCommand("sheet.command.clear-filter-criteria");
             const maxR = Math.min(100, worksheet.getMaxRows());
+            const hidden: number[] = [];
             for (let r = 0; r < maxR; r++) {
               if (worksheet.getRowHeight(r) === 0) {
-                worksheet.setRowHeight(r, 24);
+                hidden.push(r);
               }
             }
+            setRowHeightsBatched(
+              runtime.univerAPI,
+              workbook.getId(),
+              worksheet.getSheetId(),
+              worksheet.getMaxColumns(),
+              hidden,
+              24,
+            );
             setStatus("已清除所有筛选条件");
           } catch {
             setStatus("筛选条件已清除");
@@ -2361,8 +2442,8 @@ export default function App() {
         case "outline-hide-detail:rows": {
           const startR = range.getRow();
           const h = range.getHeight();
-          for (let r = 1; r < h; r++) {
-            worksheet.setRowHeight(startR + r, 0);
+          if (h > 1) {
+            worksheet.setRowHeightsForced(startR + 1, h - 1, 0);
           }
           setStatus("已折叠隐藏明细行");
           break;
@@ -2379,8 +2460,8 @@ export default function App() {
         case "outline-show-detail:rows": {
           const startR = range.getRow();
           const h = range.getHeight();
-          for (let r = 0; r < h; r++) {
-            worksheet.setRowHeight(startR + r, 24);
+          if (h > 0) {
+            worksheet.setRowHeightsForced(startR, h, 24);
           }
           setStatus("已展开显示明细行");
           break;
@@ -3045,7 +3126,7 @@ export default function App() {
           } else if (cmd.startsWith("row-height:")) {
             const pt = Number(cmd.slice("row-height:".length));
             if (!isNaN(pt) && pt > 0) {
-              worksheet.setRowHeight(range.getRow(), Math.round((pt * 96) / 72));
+              worksheet.setRowHeightsForced(range.getRow(), 1, Math.round((pt * 96) / 72));
               setStatus(`行高已设置为: ${pt} 磅`);
             }
           } else if (cmd.startsWith("col-width:")) {

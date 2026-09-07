@@ -194,14 +194,50 @@ export async function populateSheetRange(
 
   worksheet.getRange(startRow, startColumn, rows, columns).setValues(matrix)
 
-  // Apply row heights if any
+  // Apply row heights if any.
+  //
+  // Heights come from the source file, so they are authoritative — Univer must not
+  // re-derive them. The facade's per-row setters each dispatch a synchronous command,
+  // so applying N rows costs N command round-trips and blocks the main thread for
+  // seconds on a real workbook.
+  //
+  // SetWorksheetRowHeightMutation accepts a row->height map, so every row is applied
+  // in a single mutation regardless of whether heights happen to be equal. The paired
+  // SetWorksheetRowIsAutoHeightMutation pins ia=FALSE so Univer does not recompute
+  // heights it was just given (this mirrors what SetRowHeightCommand does internally).
+  const rowHeight: Record<number, number> = {}
+  const autoHeightInfo: Record<number, number> = {}
+  let minRow = Number.POSITIVE_INFINITY
+  let maxRow = -1
+
   for (const rowProp of result.rows) {
     if (rowProp.height) {
-      try {
-        worksheet.setRowHeights(rowProp.row, 1, Math.round((rowProp.height * 96) / 72))
-      } catch {
-        // ignore row height errors
-      }
+      const px = Math.round((rowProp.height * 96) / 72)
+      rowHeight[rowProp.row] = px
+      autoHeightInfo[rowProp.row] = 0 // BooleanNumber.FALSE
+      if (rowProp.row < minRow) minRow = rowProp.row
+      if (rowProp.row > maxRow) maxRow = rowProp.row
+    }
+  }
+
+  if (maxRow >= 0) {
+    const ranges = [{ startRow: minRow, endRow: maxRow, startColumn: 0, endColumn: columns - 1 }]
+    const unitId = workbook.getId()
+    try {
+      await runtime.univerAPI.executeCommand('sheet.mutation.set-worksheet-row-height', {
+        unitId,
+        subUnitId: sheetId,
+        ranges,
+        rowHeight,
+      })
+      await runtime.univerAPI.executeCommand('sheet.mutation.set-worksheet-row-is-auto-height', {
+        unitId,
+        subUnitId: sheetId,
+        ranges,
+        autoHeightInfo,
+      })
+    } catch {
+      // ignore row height errors
     }
   }
 

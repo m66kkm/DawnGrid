@@ -48,6 +48,30 @@ const VERTICAL_NAMES: Record<number, string> = {
   3: "bottom",
 };
 
+export function isSameSelectionFormat(
+  a: SelectionFormat | null,
+  b: SelectionFormat | null,
+): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return (
+    a.fontFamily === b.fontFamily &&
+    a.fontSize === b.fontSize &&
+    a.bold === b.bold &&
+    a.italic === b.italic &&
+    a.underline === b.underline &&
+    a.strike === b.strike &&
+    a.wrap === b.wrap &&
+    a.horizontalAlignment === b.horizontalAlignment &&
+    a.verticalAlignment === b.verticalAlignment &&
+    a.textRotation === b.textRotation &&
+    a.fontColor === b.fontColor &&
+    a.fillColor === b.fillColor &&
+    a.numberFormat === b.numberFormat &&
+    a.link === b.link
+  );
+}
+
 export function toSelectionFormat(
   style: IStyleData,
   numberFormat: string = "General",
