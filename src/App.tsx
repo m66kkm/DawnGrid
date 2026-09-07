@@ -70,6 +70,7 @@ import {
   transposeChartSeries,
   KIND_NAMES,
   COLOR_PALETTES,
+  columnLabel,
   type SheetVisual,
   type RecommendedKind,
   type ChartStateEdit,
@@ -86,20 +87,10 @@ import {
   type DialogId,
 } from "./store";
 import { RibbonContainer } from "./layout";
-import { usePageLayoutCommands } from "./view";
+import { usePageLayoutCommands, useViewCommands } from "./view";
 import { NotificationDialog } from "./shared/NotificationDialog";
 import { useStableCallback } from "./shared/useStableCallback";
 import "./App.css";
-
-function getColumnName(colIndex: number): string {
-  let temp = colIndex;
-  let letter = "";
-  while (temp >= 0) {
-    letter = String.fromCharCode((temp % 26) + 65) + letter;
-    temp = Math.floor(temp / 26) - 1;
-  }
-  return letter;
-}
 
 function parseA1Notation(a1: string): { row: number; col: number } | null {
   const match = /^([A-Za-z]+)(\d+)$/.exec(a1.trim());
@@ -249,21 +240,8 @@ export default function App() {
     colCount: 0,
   });
 
-  // View & Sheet Options State — in the store so toggling one does not rebuild the
-  // whole tree, and so a cell click does not rebuild the components that read them.
-  const setShowGridlines = useViewStore((s) => s.setShowGridlines);
-  const showHeadings = useViewStore((s) => s.showHeadings);
-  const setShowHeadings = useViewStore((s) => s.setShowHeadings);
-  const formulaBarVisible = useViewStore((s) => s.formulaBarVisible);
-  const setFormulaBarVisible = useViewStore((s) => s.setFormulaBarVisible);
-  const crossHighlightVisible = useViewStore((s) => s.crossHighlightVisible);
-  const setCrossHighlightVisible = useViewStore((s) => s.setCrossHighlightVisible);
-  const pageBreakPreview = useViewStore((s) => s.pageBreakPreview);
-  const setPageBreakPreview = useViewStore((s) => s.setPageBreakPreview);
-  const printGridlines = useViewStore((s) => s.printGridlines);
-  const setPrintGridlines = useViewStore((s) => s.setPrintGridlines);
-  const printHeadings = useViewStore((s) => s.printHeadings);
-  const setPrintHeadings = useViewStore((s) => s.setPrintHeadings);
+  // Remaining view state App still reads. The display toggles moved out with the
+  // view commands - RibbonContainer subscribes to them directly.
   const sheetProtected = useViewStore((s) => s.sheetProtected);
   const setSheetProtected = useViewStore((s) => s.setSheetProtected);
   const workbookProtected = useViewStore((s) => s.workbookProtected);
@@ -437,7 +415,7 @@ export default function App() {
     for (let c = 0; c < width; c++) {
       const colIdx = startCol + c;
       const cellVal = worksheet.getRange(startRow, colIdx, 1, 1).getValue();
-      const label = cellVal != null && String(cellVal).trim() !== "" ? String(cellVal) : `列 ${getColumnName(colIdx)}`;
+      const label = cellVal != null && String(cellVal).trim() !== "" ? String(cellVal) : `列 ${columnLabel(colIdx)}`;
       fields.push({ label, colIndex: colIdx });
     }
     return fields;
@@ -506,8 +484,8 @@ export default function App() {
       vals.push(rowArr);
     }
 
-    const fromA1 = `${getColumnName(startCol)}${startRow + 1}`;
-    const toA1 = `${getColumnName(startCol + numCols - 1)}${startRow + numRows}`;
+    const fromA1 = `${columnLabel(startCol)}${startRow + 1}`;
+    const toA1 = `${columnLabel(startCol + numCols - 1)}${startRow + numRows}`;
     const rangeA1 = numRows === 1 && numCols === 1 ? fromA1 : `${fromA1}:${toA1}`;
 
     return { values: vals, rangeA1, sheetName, sheetId };
@@ -596,7 +574,7 @@ export default function App() {
 
       const r = ctx.range.getRow();
       const c = ctx.range.getColumn();
-      setLastActiveCellAddress(`${getColumnName(c)}${r + 1}`);
+      setLastActiveCellAddress(`${columnLabel(c)}${r + 1}`);
     } catch (e) {
       console.warn("syncSelectionState error:", e);
     }
@@ -1430,7 +1408,7 @@ export default function App() {
     totalLabel.setBackground("#E9F3ED");
 
     const totalVal = worksheet.getRange(totalRow, targetCol + 1, 1, 1);
-    const sumFormula = `=${config.agg}(${getColumnName(targetCol + 1)}${targetRow + 2}:${getColumnName(targetCol + 1)}${totalRow})`;
+    const sumFormula = `=${config.agg}(${columnLabel(targetCol + 1)}${targetRow + 2}:${columnLabel(targetCol + 1)}${totalRow})`;
     totalVal.setFormula(sumFormula);
     totalVal.setFontWeight("bold");
     totalVal.setBackground("#E9F3ED");
@@ -1469,7 +1447,7 @@ export default function App() {
     subtotalLabel.setBackground("#FFF2CC");
 
     const subtotalVal = worksheet.getRange(lastRow, valCol, 1, 1);
-    const colLetter = getColumnName(valCol);
+    const colLetter = columnLabel(valCol);
     subtotalVal.setFormula(`=${fn}(${colLetter}${startRow + 2}:${colLetter}${lastRow})`);
     subtotalVal.setFontWeight("bold");
     subtotalVal.setBackground("#FFF2CC");
@@ -1546,6 +1524,7 @@ export default function App() {
   }
 
   const handlePageLayoutCommand = usePageLayoutCommands();
+  const handleViewCommand = useViewCommands();
 
   // Handle commands dispatched from Ribbon
   async function handleRibbonCommand(cmd: string, ...args: any[]) {
@@ -1579,6 +1558,7 @@ export default function App() {
     // Domain handlers, tried before the switch. Each returns true when it owns the
     // command, so the switch below only sees what is still inline here.
     if (handlePageLayoutCommand(cmd, ctx)) return;
+    if (handleViewCommand(cmd, ctx)) return;
 
     try {
       switch (cmd) {
@@ -1967,7 +1947,7 @@ export default function App() {
           const newW = window.prompt("设置列宽 (字符数/像素):", String(curW));
           if (newW && !isNaN(Number(newW))) {
             worksheet.setColumnWidth(range.getColumn(), Number(newW));
-            setStatus(`第 ${getColumnName(range.getColumn())} 列列宽已设为: ${newW}`);
+            setStatus(`第 ${columnLabel(range.getColumn())} 列列宽已设为: ${newW}`);
           }
           break;
         }
@@ -1983,12 +1963,12 @@ export default function App() {
         }
         case "insert-col-here": {
           worksheet.insertColumnsBefore(range.getColumn(), 1);
-          setStatus(`在第 ${getColumnName(range.getColumn())} 列前插入新列`);
+          setStatus(`在第 ${columnLabel(range.getColumn())} 列前插入新列`);
           break;
         }
         case "delete-col-here": {
           worksheet.deleteColumns(range.getColumn(), 1);
-          setStatus(`已删除第 ${getColumnName(range.getColumn())} 列`);
+          setStatus(`已删除第 ${columnLabel(range.getColumn())} 列`);
           break;
         }
         case "hide-row": {
@@ -2394,7 +2374,7 @@ export default function App() {
           break;
         }
         case "outline-group:cols": {
-          setStatus(`已将第 ${getColumnName(range.getColumn())} 至 ${getColumnName(range.getColumn() + range.getWidth() - 1)} 列设置为分级组合`);
+          setStatus(`已将第 ${columnLabel(range.getColumn())} 至 ${columnLabel(range.getColumn() + range.getWidth() - 1)} 列设置为分级组合`);
           break;
         }
         case "outline-ungroup:rows": {
@@ -2566,180 +2546,6 @@ export default function App() {
         case "note-show-toggle":
         case "comment-show": {
           setStatus("已切换显示/隐藏所有批注框");
-          break;
-        }
-
-        // ── 视图 (View) ──
-        case "view-normal": {
-          setPageBreakPreview(false);
-          worksheet.zoom(1.0);
-          setStatus("已切换为: 普通视图");
-          break;
-        }
-        case "view-page-break": {
-          setPageBreakPreview(!pageBreakPreview);
-          setStatus("已切换为: 分页预览视图");
-          break;
-        }
-        case "view-page-layout": {
-          setPageBreakPreview(true);
-          setStatus("已切换为: 页面布局视图");
-          break;
-        }
-        case "view-custom": {
-          setStatus("自定义视图：已保存当前显示及打印设置");
-          break;
-        }
-        case "toggle-ruler": {
-          setStatus("标尺显示已切换");
-          break;
-        }
-        case "toggle-gridlines": {
-          const nextHidden = !worksheet.hasHiddenGridLines();
-          worksheet.setHiddenGridlines(nextHidden);
-          setShowGridlines(!nextHidden);
-          setStatus(!nextHidden ? "网格线已显示" : "网格线已隐藏");
-          break;
-        }
-        case "print-gridlines": {
-          const next = !printGridlines;
-          setPrintGridlines(next);
-          setStatus(next ? "打印网格线已开启" : "打印网格线已关闭");
-          break;
-        }
-        case "toggle-formula-bar": {
-          const next = !formulaBarVisible;
-          document.getElementById("univer-container")?.classList.toggle("formula-bar-hidden", !next);
-          setFormulaBarVisible(next);
-          setStatus(next ? "编辑栏已显示" : "编辑栏已隐藏");
-          break;
-        }
-        case "toggle-cross-highlight": {
-          const next = !crossHighlightVisible;
-          setCrossHighlightVisible(next);
-          setStatus(next ? "十字高亮已开启" : "十字高亮已关闭");
-          break;
-        }
-        case "toggle-headings": {
-          const next = !showHeadings;
-          setShowHeadings(next);
-          try {
-            const config = (worksheet as any).getSheet?.()?.getConfig?.();
-            if (config) {
-              const nextHidden = config.rowHeader?.hidden !== 1;
-              config.rowHeader.hidden = nextHidden ? 1 : 0;
-              config.columnHeader.hidden = nextHidden ? 1 : 0;
-            }
-          } catch {}
-          setStatus(next ? "行号列标已显示" : "行号列标已隐藏");
-          break;
-        }
-        case "print-headings": {
-          const next = !printHeadings;
-          setPrintHeadings(next);
-          setStatus(next ? "打印标题（行标列标）已开启" : "打印标题已关闭");
-          break;
-        }
-        case "zoom-in": {
-          const currentZ = worksheet.getZoom() || 1.0;
-          const nextZ = Math.min(4.0, Number((currentZ + 0.1).toFixed(2)));
-          worksheet.zoom(nextZ);
-          setStatus(`视图缩放: ${Math.round(nextZ * 100)}%`);
-          break;
-        }
-        case "zoom-out": {
-          const currentZ = worksheet.getZoom() || 1.0;
-          const nextZ = Math.max(0.25, Number((currentZ - 0.1).toFixed(2)));
-          worksheet.zoom(nextZ);
-          setStatus(`视图缩放: ${Math.round(nextZ * 100)}%`);
-          break;
-        }
-        case "zoom-reset":
-        case "zoom:100": {
-          worksheet.zoom(1.0);
-          setStatus("视图缩放: 100%");
-          break;
-        }
-        case "zoom:75": {
-          worksheet.zoom(0.75);
-          setStatus("视图缩放: 75%");
-          break;
-        }
-        case "zoom:125": {
-          worksheet.zoom(1.25);
-          setStatus("视图缩放: 125%");
-          break;
-        }
-        case "zoom:200": {
-          worksheet.zoom(2.0);
-          setStatus("视图缩放: 200%");
-          break;
-        }
-        case "zoom-to-selection": {
-          const selW = Math.max(1, range.getWidth());
-          const selH = Math.max(1, range.getHeight());
-          const ratio = Math.min(2.5, Math.max(0.5, 8 / Math.max(selW, selH)));
-          worksheet.zoom(Number(ratio.toFixed(2)));
-          setStatus(`缩放至选区大小 (${Math.round(ratio * 100)}%)`);
-          break;
-        }
-        case "freeze-here": {
-          const r = range.getRow();
-          const c = range.getColumn();
-          try {
-            worksheet.setFreeze({
-              startRow: r > 0 ? r : 1,
-              startColumn: c > 0 ? c : 1,
-              xSplit: c > 0 ? c : 1,
-              ySplit: r > 0 ? r : 1,
-            });
-            setStatus(`已冻结至第 ${r + 1} 行、第 ${getColumnName(c)} 列`);
-          } catch (e) {
-            console.warn(e);
-          }
-          break;
-        }
-        case "freeze-top-row": {
-          worksheet.setFreeze({ startRow: 1, startColumn: -1, xSplit: 0, ySplit: 1 });
-          setStatus("已冻结首行");
-          break;
-        }
-        case "freeze-first-col": {
-          worksheet.setFreeze({ startRow: -1, startColumn: 1, xSplit: 1, ySplit: 0 });
-          setStatus("已冻结首列");
-          break;
-        }
-        case "unfreeze": {
-          try {
-            worksheet.cancelFreeze();
-            setStatus("已取消冻结窗格");
-          } catch (e) {
-            console.warn(e);
-          }
-          break;
-        }
-        case "new-window": {
-          setStatus("已新建工作簿多窗口视图");
-          break;
-        }
-        case "arrange-all": {
-          setStatus("已平铺重排所有工作簿窗口");
-          break;
-        }
-        case "split-window": {
-          setStatus("已切换窗口拆分模式");
-          break;
-        }
-        case "hide-window": {
-          setStatus("已隐藏当前工作簿窗口");
-          break;
-        }
-        case "unhide-window": {
-          setStatus("已取消隐藏工作簿窗口");
-          break;
-        }
-        case "switch-windows": {
-          setStatus("已切换到下一活动窗口");
           break;
         }
 
